@@ -56,14 +56,14 @@ def _validate(config: AppConfig) -> None:
             ", ".join(sorted(_SUPPORTED_LANGUAGES)),
         )
 
-    # Host / producer checks
+    # Host check — exactly one host (holds the 4 virtual meters / grid connection)
     hosts = [m for m in config.members if m.is_host]
     if not hosts:
-        logger.error("No member has is_host = true — at least one host is required")
+        logger.error("No member has is_host = true — exactly one host is required")
         sys.exit(1)
     if len(hosts) > 1:
-        names = ", ".join(m.full_name for m in hosts)
-        logger.info("Multiple hosts configured: {}", names)
+        logger.error("Multiple members have is_host = true — only one host is allowed")
+        sys.exit(1)
 
     if config.collective.local_rate == 0.0:
         logger.warning("Collective local_rate is 0 — local solar costs/revenue will be zero")

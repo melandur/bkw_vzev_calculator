@@ -22,11 +22,9 @@ bkw_buy_rate = 0.2816                       # Grid purchase rate (CHF/kWh) — f
 bkw_sell_rate = 0.1311                      # Grid sell-back rate (CHF/kWh) — energy + Herkunftsnachweise
 
 # -----------------------------------------------------------------------------
-# Host — solar installation owner(s)
-# At least one member must have is_host = true.
-# Multiple hosts are supported — grid export surplus is split proportionally
-# based on each producer's share of total production.
-# The host needs 4 meters: physical + virtual for both consumption and production.
+# Host — exactly one member with is_host = true
+# The host holds the grid connection and has 4 meters:
+#   physical + virtual for both consumption and production.
 # -----------------------------------------------------------------------------
 
 [[members]]
@@ -69,7 +67,9 @@ is_virtual = true
 # -----------------------------------------------------------------------------
 # Members — each additional participant in the vZEV
 # Add as many [[members]] blocks as needed.
-# Members typically have only one physical consumption meter.
+# Members have at least one physical consumption meter.
+# Members with their own solar add a physical production meter — they earn
+# revenue (local sell + grid export) proportionally like the host.
 # -----------------------------------------------------------------------------
 
 [[members]]
@@ -88,6 +88,8 @@ is_production = false
 is_virtual = false
 
 # -----------------------------------------------------------------------------
+# Member with production — has own solar, earns revenue proportionally
+# -----------------------------------------------------------------------------
 
 [[members]]
 first_name = "Peter"
@@ -100,6 +102,29 @@ is_host = false
 
 [[members.meters]]
 external_id = "CH10222012345000000000000000BBBBB"
+name = "Verbrauch Physisch"
+is_production = false
+is_virtual = false
+
+[[members.meters]]
+external_id = "CH10222012345000000000000000BBBBC"
+name = "Produktion Physisch"
+is_production = true
+is_virtual = false
+
+# -----------------------------------------------------------------------------
+
+[[members]]
+first_name = "Laura"
+last_name = "Fischer"
+street = "Musterweg 7"
+zip = "3000"
+city = "Bern"
+canton = "BE"
+is_host = false
+
+[[members.meters]]
+external_id = "CH10222012345000000000000000CCCCC"
 name = "Verbrauch Physisch"
 is_production = false
 is_virtual = false

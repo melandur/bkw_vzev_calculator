@@ -97,9 +97,9 @@ All configuration is in `config.toml` (see `config.example.toml` for a template)
 | `zip`        | Postal code                                    |
 | `city`       | City                                           |
 | `canton`     | Canton abbreviation (e.g. `"BE"`)              |
-| `is_host`    | `true` for solar installation owner(s)         |
+| `is_host`    | `true` for the host (grid connection owner)    |
 
-At least **one** member must have `is_host = true`. Multiple hosts/producers are supported.
+Exactly **one** member must have `is_host = true`. The host holds the 4 virtual meters.
 
 ### `[[members.meters]]`
 
@@ -110,23 +110,17 @@ At least **one** member must have `is_host = true`. Multiple hosts/producers are
 | `is_production` | `true` for solar production meters, `false` for consumption  |
 | `is_virtual`    | `true` for virtual (grid-level) meters                       |
 
-**Host meters:** The host typically has 4 meters:
+**Host meters:** The host has 4 meters (they hold the grid connection):
 - Verbrauch Physisch (physical consumption)
 - Produktion Physisch (physical production)
 - Verbrauch Virtuell (virtual consumption = total grid draw for the collective)
 - Produktion Virtuell (virtual production = total grid export)
 
-**Member meters:** Non-host members typically have 1 meter:
-- Verbrauch Physisch (physical consumption)
+**Member meters:** Members typically have at least one physical consumption meter. A member can also have physical production meters if they own solar panels — they then earn revenue (local sell + grid export) like the host, split proportionally by production share.
 
-## Multiple Producers
+## Members with Production
 
-The calculator supports multiple solar installations in the same vZEV. Set `is_host = true` for each member that owns a solar installation and add their production meters.
-
-- Hosts get free local solar consumption (local_rate = 0)
-- Available solar is pooled and distributed proportionally to all consumers based on demand
-- Grid export surplus is split proportionally based on each producer's share of total production per 15-minute interval
-- All producers earn revenue at the same collective `local_rate` and `bkw_sell_rate`
+Members can have both physical consumption and physical production meters. If they produce, they earn revenue at the collective `local_rate` and `bkw_sell_rate`, split proportionally with the host based on each producer's share of total production per 15-minute interval. The host gets free local solar consumption; members with production pay for their consumption but earn from production.
 
 ## Pipeline
 
