@@ -18,6 +18,9 @@ dependencies = [
 packages = ["src"]
 
 [project.optional-dependencies]
+gui = [
+    "streamlit>=1.30",
+]
 dev = [
     "ruff",
     "pytest",

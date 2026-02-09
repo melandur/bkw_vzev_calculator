@@ -150,6 +150,29 @@ The calculator enforces strict data quality:
 - Months must have **no 15-minute gaps** for any meter
 - Months that fail either check are excluded from billing with a logged warning
 
+## GUI (optional)
+
+An optional Streamlit-based web GUI lets you edit the configuration and run the pipeline from your browser.
+
+```bash
+# Install Streamlit
+pip install streamlit
+
+# Or install with the gui extra
+pip install -e ".[gui]"
+
+# Launch the GUI
+streamlit run app.py
+```
+
+The GUI provides:
+
+- **Sidebar** -- edit settings, collective parameters, and rates
+- **Members editor** -- add/remove members and meters, toggle host/production/virtual flags
+- **Save** -- writes your changes back to `config.toml`
+- **Run pipeline** -- executes the full billing pipeline and displays the log
+- **Download** -- download generated PDF bills and CSV summaries directly from the browser
+
 ## Re-running
 
 The pipeline is idempotent. Running it again with the same data produces identical results. Adding new CSV data and re-running will import the new records and recalculate.
