@@ -193,6 +193,13 @@ def allocate_month(conn: sqlite3.Connection, year: int, month: int) -> int:
         # Virtual production = surplus exported to grid
         virtual_production = max(0.0, physical_production - physical_consumption)
 
+        # Split surplus proportionally among producers
+        producer_share: dict[int, float] = {}
+        total_prod = sum(member_production.values())
+        if total_prod > 0:
+            for pid, prod in member_production.items():
+                producer_share[pid] = prod / total_prod
+
         # ------------------------------------------------------------------
         # Build InvoiceDaily records — one per member that has activity
         # ------------------------------------------------------------------
@@ -206,7 +213,7 @@ def allocate_month(conn: sqlite3.Connection, year: int, month: int) -> int:
                     month=dt.month,
                     day=dt.day,
                     virtual_consumption=round(member_bkw.get(mid, 0.0), 6),
-                    virtual_production=round(virtual_production if mid in member_production else 0.0, 6),
+                    virtual_production=round(virtual_production * producer_share.get(mid, 0.0), 6),
                     local_consumption=round(member_local.get(mid, 0.0), 6),
                     bkw_consumption=round(member_bkw.get(mid, 0.0), 6),
                     physical_consumption=round(member_consumption.get(mid, 0.0), 6),

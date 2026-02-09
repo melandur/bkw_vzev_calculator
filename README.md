@@ -97,9 +97,9 @@ All configuration is in `config.toml` (see `config.example.toml` for a template)
 | `zip`        | Postal code                                    |
 | `city`       | City                                           |
 | `canton`     | Canton abbreviation (e.g. `"BE"`)              |
-| `is_host`    | `true` for the solar installation owner        |
+| `is_host`    | `true` for solar installation owner(s)         |
 
-Exactly **one** member must have `is_host = true`.
+At least **one** member must have `is_host = true`. Multiple hosts/producers are supported.
 
 ### `[[members.meters]]`
 
@@ -118,6 +118,15 @@ Exactly **one** member must have `is_host = true`.
 
 **Member meters:** Non-host members typically have 1 meter:
 - Verbrauch Physisch (physical consumption)
+
+## Multiple Producers
+
+The calculator supports multiple solar installations in the same vZEV. Set `is_host = true` for each member that owns a solar installation and add their production meters.
+
+- Hosts get free local solar consumption (local_rate = 0)
+- Available solar is pooled and distributed proportionally to all consumers based on demand
+- Grid export surplus is split proportionally based on each producer's share of total production per 15-minute interval
+- All producers earn revenue at the same collective `local_rate` and `bkw_sell_rate`
 
 ## Pipeline
 

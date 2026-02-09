@@ -22,8 +22,10 @@ bkw_buy_rate = 0.2816                       # Grid purchase rate (CHF/kWh) — f
 bkw_sell_rate = 0.1311                      # Grid sell-back rate (CHF/kWh) — energy + Herkunftsnachweise
 
 # -----------------------------------------------------------------------------
-# Host — the solar installation owner
-# Exactly one member must have is_host = true.
+# Host — solar installation owner(s)
+# At least one member must have is_host = true.
+# Multiple hosts are supported — grid export surplus is split proportionally
+# based on each producer's share of total production.
 # The host needs 4 meters: physical + virtual for both consumption and production.
 # -----------------------------------------------------------------------------
 

@@ -56,6 +56,15 @@ def _validate(config: AppConfig) -> None:
             ", ".join(sorted(_SUPPORTED_LANGUAGES)),
         )
 
+    # Host / producer checks
+    hosts = [m for m in config.members if m.is_host]
+    if not hosts:
+        logger.error("No member has is_host = true — at least one host is required")
+        sys.exit(1)
+    if len(hosts) > 1:
+        names = ", ".join(m.full_name for m in hosts)
+        logger.info("Multiple hosts configured: {}", names)
+
     if config.collective.local_rate == 0.0:
         logger.warning("Collective local_rate is 0 — local solar costs/revenue will be zero")
     if config.collective.bkw_buy_rate == 0.0:

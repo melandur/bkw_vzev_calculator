@@ -189,8 +189,8 @@ def _draw_daily_detail_pages(
     _daily_consumption_table(pdf, details, bill.currency, t)
     _draw_footer(pdf, t)
 
-    # --- Page: Daily production & revenue (host only) ----------------------
-    if is_host and bill.total_production_kwh > 0:
+    # --- Page: Daily production & revenue (any producer) -------------------
+    if bill.total_production_kwh > 0:
         pdf.add_page()
         pdf.set_auto_page_break(auto=False)
         _draw_header_bar(pdf, bill_title, collective_name)
