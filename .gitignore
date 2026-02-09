@@ -205,3 +205,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific — sensitive data
+config.toml
+*.db
+*.db-wal
+*.db-shm
+data/*.csv
+output/*.pdf
+output/*.csv

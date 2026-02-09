@@ -1,0 +1,120 @@
+# =============================================================================
+# BKW vZEV Calculator — Example Configuration
+#
+# Copy this file to config.toml and fill in your real values:
+#   cp config.example.toml config.toml
+# =============================================================================
+
+[settings]
+csv_directory = "./data"            # Folder containing BKW CSV exports
+output_directory = "./output"       # Folder for generated PDF/CSV bills
+database_path = "./vzev.db"         # SQLite database file path
+
+[collective]
+name = "Musterweg vZEV"                    # Name of your vZEV collective
+language = "de"                             # Bill language: en, de, fr, it
+show_daily_detail = false                   # Add daily breakdown pages to PDFs
+bill_months = []                            # Only bill these months, e.g. ["2025-10", "2025-11"] (empty = all billable)
+period_start = 2025-01-01                   # Billing period start date
+period_end = 2025-12-31                     # Billing period end date
+local_rate = 0.16                           # Local solar rate (CHF/kWh) — buy for members, sell for producer
+bkw_buy_rate = 0.2816                       # Grid purchase rate (CHF/kWh) — from your BKW invoice, all-in incl. MWST
+bkw_sell_rate = 0.1311                      # Grid sell-back rate (CHF/kWh) — energy + Herkunftsnachweise
+
+# -----------------------------------------------------------------------------
+# Host — the solar installation owner
+# Exactly one member must have is_host = true.
+# The host needs 4 meters: physical + virtual for both consumption and production.
+# -----------------------------------------------------------------------------
+
+[[members]]
+first_name = "Max"
+last_name = "Muster"
+street = "Musterweg 1"
+zip = "3000"
+city = "Bern"
+canton = "BE"
+is_host = true
+
+# Physical consumption meter (Verbrauch Physisch)
+[[members.meters]]
+external_id = "CH10222012345000000000000000XXXXX"
+name = "Verbrauch Physisch"
+is_production = false
+is_virtual = false
+
+# Physical production meter (Produktion Physisch)
+[[members.meters]]
+external_id = "CH10222012345000000000000000XXXXX"
+name = "Produktion Physisch"
+is_production = true
+is_virtual = false
+
+# Virtual consumption meter (Verbrauch Virtuell)
+[[members.meters]]
+external_id = "CH10222012345000000000000000XXXXX"
+name = "Verbrauch Virtuell"
+is_production = false
+is_virtual = true
+
+# Virtual production meter (Produktion Virtuell)
+[[members.meters]]
+external_id = "CH10222012345000000000000000XXXXX"
+name = "Produktion Virtuell"
+is_production = true
+is_virtual = true
+
+# -----------------------------------------------------------------------------
+# Members — each additional participant in the vZEV
+# Add as many [[members]] blocks as needed.
+# Members typically have only one physical consumption meter.
+# -----------------------------------------------------------------------------
+
+[[members]]
+first_name = "Anna"
+last_name = "Beispiel"
+street = "Musterweg 3"
+zip = "3000"
+city = "Bern"
+canton = "BE"
+is_host = false
+
+[[members.meters]]
+external_id = "CH10222012345000000000000000AAAAA"
+name = "Verbrauch Physisch"
+is_production = false
+is_virtual = false
+
+# -----------------------------------------------------------------------------
+
+[[members]]
+first_name = "Peter"
+last_name = "Huber"
+street = "Musterweg 5"
+zip = "3000"
+city = "Bern"
+canton = "BE"
+is_host = false
+
+[[members.meters]]
+external_id = "CH10222012345000000000000000BBBBB"
+name = "Verbrauch Physisch"
+is_production = false
+is_virtual = false
+
+# -----------------------------------------------------------------------------
+
+[[members]]
+first_name = "Laura"
+last_name = "Fischer"
+street = "Musterweg 7"
+zip = "3000"
+city = "Bern"
+canton = "BE"
+is_host = false
+
+[[members.meters]]
+external_id = "CH10222012345000000000000000CCCCC"
+name = "Verbrauch Physisch"
+is_production = false
+is_virtual = false
