@@ -18,7 +18,7 @@ from src.allocation import run_allocation
 from src.billing import calculate_bills
 from src.config import load_config
 from src.csv_import import import_csv_directory
-from src.database import init_database, sync_config_to_db
+from src.database import init_database, print_month_availability, sync_config_to_db
 from src.export_csv import export_csv_bills
 from src.export_pdf import export_pdf_bills
 from src.quality import get_billable_months, run_quality_checks
@@ -123,6 +123,9 @@ def main(config_path: str = "config.toml") -> None:
         # 7. Solar allocation (only billable months)
         allocated = run_allocation(conn, months=billable)
         logger.info("Allocation: {} invoice_daily records", allocated)
+
+        # 7b. Show month availability overview
+        print_month_availability(conn)
 
         # 8. Group months by billing interval and calculate bills
         billing_interval = config.collective.billing_interval

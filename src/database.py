@@ -507,3 +507,87 @@ def get_distinct_energy_months(conn: sqlite3.Connection) -> list[tuple[int, int]
            ORDER BY year, month"""
     ).fetchall()
     return [(r["year"], r["month"]) for r in rows]
+
+
+# ===========================================================================
+# Month availability overview
+# ===========================================================================
+
+
+def get_month_availability(
+    conn: sqlite3.Connection,
+) -> dict[int, dict[int, dict[str, bool]]]:
+    """Return month availability status grouped by year.
+
+    Returns a nested dict: {year: {month: {"has_data": bool, "complete": bool, "allocated": bool}}}
+    """
+    # Get all months with raw energy data
+    energy_months = set(get_distinct_energy_months(conn))
+
+    # Get complete months (passed quality check)
+    complete_months = set(get_complete_months(conn))
+
+    # Get months with allocation data (invoice_daily)
+    allocated_rows = conn.execute(
+        """SELECT DISTINCT year, month FROM invoice_daily ORDER BY year, month"""
+    ).fetchall()
+    allocated_months = {(r["year"], r["month"]) for r in allocated_rows}
+
+    # Collect all years
+    all_months = energy_months | complete_months | allocated_months
+    if not all_months:
+        return {}
+
+    years = sorted({ym[0] for ym in all_months})
+
+    result: dict[int, dict[int, dict[str, bool]]] = {}
+    for year in years:
+        result[year] = {}
+        for month in range(1, 13):
+            ym = (year, month)
+            result[year][month] = {
+                "has_data": ym in energy_months,
+                "complete": ym in complete_months,
+                "allocated": ym in allocated_months,
+            }
+    return result
+
+
+def print_month_availability(conn: sqlite3.Connection) -> None:
+    """Print a visual overview of month availability to the terminal.
+
+    Legend:
+      ■ = allocated (ready to bill)
+      ◫ = has data (not yet allocated)
+      · = no data
+    """
+    availability = get_month_availability(conn)
+    if not availability:
+        print("No data in database.")
+        return
+
+    month_abbr = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+    # Header
+    print("\n  Month Data Availability")
+    print("  " + "─" * 50)
+    print("       " + "  ".join(f"{m:>3}" for m in month_abbr))
+    print("  " + "─" * 50)
+
+    for year, months in sorted(availability.items()):
+        row = f"  {year} "
+        for m in range(1, 13):
+            info = months.get(m, {})
+            if info.get("allocated"):
+                icon = " ■ "  # filled = allocated
+            elif info.get("has_data"):
+                icon = " ◫ "  # has data but not allocated
+            else:
+                icon = " · "  # dot = no data
+            row += f" {icon}"
+        print(row)
+
+    print("  " + "─" * 50)
+    print("  Legend: ■ allocated  ◫ has data  · none")
+    print()

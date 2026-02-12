@@ -13,7 +13,8 @@ from pathlib import Path
 import streamlit as st
 from loguru import logger
 
-from src.translations import get_gui_translations
+from src.database import get_connection, get_month_availability
+from src.translations import get_gui_translations, get_month_name
 
 _CONFIG_PATH = Path("config.toml")
 _LANGUAGES = ["en", "de", "fr", "it"]
@@ -281,6 +282,157 @@ def _sidebar() -> None:
         format="%.4f",
         step=0.01,
     )
+
+
+def _sidebar_bottom() -> None:
+    """Render the bottom section of sidebar with Data Availability and sticky action button."""
+    t = _gui_lang()
+
+    st.sidebar.divider()
+
+    # Data Availability button
+    _render_data_availability_button()
+
+    # Add spacer to push action button to bottom
+    st.sidebar.markdown(
+        """
+        <style>
+        /* Make sidebar scrollable with fixed footer */
+        [data-testid="stSidebar"] > div:first-child {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+            flex: 1;
+            overflow-y: auto;
+        }
+        /* Sticky action button container */
+        .sidebar-footer {
+            position: sticky;
+            bottom: 0;
+            background: var(--background-color);
+            padding: 1rem 0;
+            border-top: 1px solid rgba(128, 128, 128, 0.2);
+            margin-top: auto;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Combined Save & Create Bills button in sticky footer
+    st.sidebar.markdown('<div class="sidebar-footer">', unsafe_allow_html=True)
+    if st.sidebar.button(t["run_pipeline"], type="primary", use_container_width=True):
+        _run_full_pipeline()
+    st.sidebar.markdown('</div>', unsafe_allow_html=True)
+
+
+def _run_full_pipeline() -> None:
+    """Save config, load CSV, and create bills - all in one action."""
+    t = _gui_lang()
+
+    s = st.session_state["settings"]
+    for key in ("csv_directory", "output_directory", "database_path"):
+        if not s.get(key, "").strip():
+            st.sidebar.warning(f"{key} is empty")
+            return
+
+    # Save config
+    coll = dict(st.session_state["collective"])
+    toml_str = _serialize_toml(s, coll, st.session_state["members"])
+    _CONFIG_PATH.write_text(toml_str, encoding="utf-8")
+
+    # Run full pipeline
+    log_buffer = io.StringIO()
+    sink_id = logger.add(
+        log_buffer, format="{time:HH:mm:ss} | {level: <8} | {message}", level="INFO"
+    )
+
+    try:
+        from main import main as run_main
+
+        run_main(str(_CONFIG_PATH))
+        st.session_state["_pipeline_success"] = True
+        st.session_state["_pipeline_error"] = None
+    except SystemExit:
+        st.session_state["_pipeline_success"] = False
+        st.session_state["_pipeline_error"] = "exit"
+    except Exception as exc:
+        st.session_state["_pipeline_success"] = False
+        st.session_state["_pipeline_error"] = str(exc)
+    finally:
+        try:
+            logger.remove(sink_id)
+        except ValueError:
+            pass
+
+    st.session_state["_pipeline_log"] = log_buffer.getvalue()
+    st.rerun()
+
+
+def _render_data_availability_button() -> None:
+    """Render a button that opens a popup with month availability overview."""
+    t = _gui_lang()
+    db_path = st.session_state["settings"].get("database_path", "./vzev.db")
+
+    @st.dialog(t.get("data_availability", "Data Availability"), width="large")
+    def _show_availability_dialog():
+        lang = st.session_state.get("app_language", "en")
+
+        if not Path(db_path).exists():
+            st.info(t.get("no_data_yet", "No data yet"))
+            return
+
+        try:
+            conn = get_connection(db_path)
+            availability = get_month_availability(conn)
+            conn.close()
+        except Exception:
+            st.info(t.get("no_data_yet", "No data yet"))
+            return
+
+        if not availability:
+            st.info(t.get("no_data_yet", "No data yet"))
+            return
+
+        # Month headers
+        month_names = [get_month_name(lang, m) for m in range(1, 13)]
+
+        # Build the grid using Streamlit columns
+        # Header row
+        cols = st.columns([1] + [1] * 12)
+        cols[0].markdown("**Year**")
+        for i, name in enumerate(month_names):
+            cols[i + 1].markdown(f"**{name[:3]}**")
+
+        # Data rows
+        for year, months in sorted(availability.items()):
+            cols = st.columns([1] + [1] * 12)
+            cols[0].markdown(f"**{year}**")
+            for m in range(1, 13):
+                info = months.get(m, {})
+                if info.get("allocated"):
+                    cols[m].markdown("🟢")  # Green = allocated
+                elif info.get("has_data"):
+                    cols[m].markdown("🟠")  # Orange = has data (not yet allocated)
+                else:
+                    cols[m].markdown("⚪")  # White/gray = none
+
+        st.divider()
+
+        # Legend
+        leg_cols = st.columns(3)
+        leg_cols[0].markdown("🟢 " + t.get("legend_allocated", "Allocated").replace("■ ", ""))
+        leg_cols[1].markdown("🟠 " + t.get("legend_partial", "Has data").replace("◫ ", ""))
+        leg_cols[2].markdown("⚪ " + t.get("legend_none", "None").replace("· ", ""))
+
+        # Help text about CSV location
+        csv_dir = st.session_state["settings"].get("csv_directory", "./data")
+        st.info(t.get("csv_location_hint", "Place energy CSV files in: {path}").format(path=csv_dir))
+
+    if st.sidebar.button(t.get("data_availability", "Data Availability"), use_container_width=True):
+        _show_availability_dialog()
 
 
 def _members_section() -> None:
@@ -563,64 +715,9 @@ def _members_section() -> None:
 
 
 def _actions_section() -> None:
-    """Render save and run buttons, output display."""
+    """Render pipeline results and output display."""
     t = _gui_lang()
     st.divider()
-
-    # Center the buttons using columns with spacers
-    spacer1, col1, col2, spacer2 = st.columns([1, 2, 2, 1])
-
-    # ---- Save config ----
-    if col1.button(t["save_config"], type="primary", use_container_width=True):
-        s = st.session_state["settings"]
-        for key in ("csv_directory", "output_directory", "database_path"):
-            if not s.get(key, "").strip():
-                st.warning(f"{key} is empty — the pipeline will fail without it.")
-
-        coll = dict(st.session_state["collective"])
-
-        toml_str = _serialize_toml(
-            s,
-            coll,
-            st.session_state["members"],
-        )
-        _CONFIG_PATH.write_text(toml_str, encoding="utf-8")
-        st.success(t["saved_to"].format(path=_CONFIG_PATH))
-
-    # ---- Run pipeline (save first, then run) ----
-    if col2.button(t["run_pipeline"], use_container_width=True):
-        # Auto-save config before running
-        s = st.session_state["settings"]
-        coll = dict(st.session_state["collective"])
-        toml_str = _serialize_toml(s, coll, st.session_state["members"])
-        _CONFIG_PATH.write_text(toml_str, encoding="utf-8")
-
-        log_buffer = io.StringIO()
-        sink_id = logger.add(
-            log_buffer, format="{time:HH:mm:ss} | {level: <8} | {message}", level="INFO"
-        )
-
-        with st.spinner(t["running_pipeline"]):
-            try:
-                from main import main as run_main
-
-                run_main(str(_CONFIG_PATH))
-                st.session_state["_pipeline_success"] = True
-                st.session_state["_pipeline_error"] = None
-            except SystemExit:
-                st.session_state["_pipeline_success"] = False
-                st.session_state["_pipeline_error"] = "exit"
-            except Exception as exc:
-                st.session_state["_pipeline_success"] = False
-                st.session_state["_pipeline_error"] = str(exc)
-            finally:
-                try:
-                    logger.remove(sink_id)
-                except ValueError:
-                    pass  # Handler already removed
-
-        st.session_state["_pipeline_log"] = log_buffer.getvalue()
-        st.rerun()  # Rerun to show results persistently
 
     # Show pipeline results (persisted across reruns)
     if st.session_state.get("_pipeline_success") is True:
@@ -739,6 +836,7 @@ def main() -> None:
     _init_state()
     _language_selector()
     _sidebar()
+    _sidebar_bottom()
     _members_section()
     _actions_section()
 
