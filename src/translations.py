@@ -281,11 +281,9 @@ _GUI_TRANSLATIONS: dict[str, dict[str, str]] = {
         # Data availability
         "data_availability": "Data Availability",
         "no_data_yet": "No data yet",
-        "legend_allocated": "■ Allocated",
-        "legend_complete": "◧ Complete",
-        "legend_partial": "◫ Partial",
-        "legend_has_data": "◫ Has data",
-        "legend_none": "· None",
+        "legend_complete": "■ Complete",
+        "legend_partial": "◫ Not complete",
+        "legend_none": "· Missing",
         "csv_location_hint": "Place energy CSV files in: {path}",
         "add_production_meter": "Add production meter",
         # Billing intervals
@@ -377,11 +375,9 @@ _GUI_TRANSLATIONS: dict[str, dict[str, str]] = {
         # Data availability
         "data_availability": "Datenverfügbarkeit",
         "no_data_yet": "Noch keine Daten",
-        "legend_allocated": "■ Zugeordnet",
-        "legend_complete": "◧ Vollständig",
-        "legend_partial": "◫ Teilweise",
-        "legend_has_data": "◫ Hat Daten",
-        "legend_none": "· Keine",
+        "legend_complete": "■ Vollständig",
+        "legend_partial": "◫ Unvollständig",
+        "legend_none": "· Fehlt",
         "csv_location_hint": "Energie-CSV-Dateien ablegen in: {path}",
     },
     "fr": {
@@ -467,11 +463,9 @@ _GUI_TRANSLATIONS: dict[str, dict[str, str]] = {
         # Data availability
         "data_availability": "Disponibilité des données",
         "no_data_yet": "Pas encore de données",
-        "legend_allocated": "■ Attribué",
-        "legend_complete": "◧ Complet",
-        "legend_partial": "◫ Partiel",
-        "legend_has_data": "◫ A des données",
-        "legend_none": "· Aucun",
+        "legend_complete": "■ Complet",
+        "legend_partial": "◫ Incomplet",
+        "legend_none": "· Manquant",
         "csv_location_hint": "Placer les fichiers CSV d'énergie dans: {path}",
     },
     "it": {
@@ -557,11 +551,9 @@ _GUI_TRANSLATIONS: dict[str, dict[str, str]] = {
         # Data availability
         "data_availability": "Disponibilità dati",
         "no_data_yet": "Nessun dato ancora",
-        "legend_allocated": "■ Allocato",
-        "legend_complete": "◧ Completo",
-        "legend_partial": "◫ Parziale",
-        "legend_has_data": "◫ Ha dati",
-        "legend_none": "· Nessuno",
+        "legend_complete": "■ Completo",
+        "legend_partial": "◫ Incompleto",
+        "legend_none": "· Mancante",
         "csv_location_hint": "Posizionare i file CSV energetici in: {path}",
     },
 }

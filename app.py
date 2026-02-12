@@ -416,20 +416,20 @@ def _render_data_availability_button() -> None:
             cols[0].markdown(f"**{year}**")
             for m in range(1, 13):
                 info = months.get(m, {})
-                if info.get("allocated"):
-                    cols[m].markdown("🟢")  # Green = allocated
+                if info.get("complete"):
+                    cols[m].markdown("🟢")  # Green = complete
                 elif info.get("has_data"):
-                    cols[m].markdown("🟠")  # Orange = has data (not yet allocated)
+                    cols[m].markdown("🟠")  # Orange = not complete (partial data)
                 else:
-                    cols[m].markdown("⚪")  # White/gray = none
+                    cols[m].markdown("⚪")  # White = missing
 
         st.divider()
 
         # Legend
         leg_cols = st.columns(3)
-        leg_cols[0].markdown("🟢 " + t.get("legend_allocated", "■ Allocated").replace("■ ", ""))
-        leg_cols[1].markdown("🟠 " + t.get("legend_has_data", "◫ Has data").replace("◫ ", ""))
-        leg_cols[2].markdown("⚪ " + t.get("legend_none", "· None").replace("· ", ""))
+        leg_cols[0].markdown("🟢 " + t.get("legend_complete", "■ Complete").replace("■ ", ""))
+        leg_cols[1].markdown("🟠 " + t.get("legend_partial", "◫ Not complete").replace("◫ ", ""))
+        leg_cols[2].markdown("⚪ " + t.get("legend_none", "· Missing").replace("· ", ""))
 
         # Help text about CSV location
         csv_dir = st.session_state["settings"].get("csv_directory", "./data")
