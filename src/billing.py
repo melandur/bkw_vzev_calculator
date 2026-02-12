@@ -218,6 +218,8 @@ def calculate_bills_for_period(
                     d_local_sell_rev = d_local_sell * collective_local_rate if is_producer else 0.0
 
                     daily_details.append(DailyDetail(
+                        year=year,
+                        month=month,
                         day=dr["day"],
                         local_consumption_kwh=round(d_local),
                         bkw_consumption_kwh=round(d_bkw),

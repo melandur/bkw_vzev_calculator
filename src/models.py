@@ -157,6 +157,8 @@ class InvoiceDaily(BaseModel):
 class DailyDetail(BaseModel):
     """Aggregated daily data for a single member."""
 
+    year: int = 0
+    month: int = 0
     day: int
     local_consumption_kwh: float = 0.0
     bkw_consumption_kwh: float = 0.0

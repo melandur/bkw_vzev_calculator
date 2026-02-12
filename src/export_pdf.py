@@ -167,7 +167,7 @@ def _generate_bill_pdf(
 
     # ---- Daily detail pages (optional) ------------------------------------
     if show_daily_detail and bill.daily_details:
-        _draw_daily_detail_pages(pdf, bill, collective_name, bill_title, period_label, t)
+        _draw_daily_detail_pages(pdf, bill, collective_name, bill_title, period_label, t, language)
 
     pdf.output(str(filepath))
     logger.debug("  PDF: {}", filepath.name)
@@ -175,8 +175,14 @@ def _generate_bill_pdf(
 
 
 # ===========================================================================
-# Daily detail pages
+# Daily detail pages – grouped by month for multi-month billing periods
 # ===========================================================================
+
+# Daily table column widths
+_D_DAY = 18
+_D_VAL = (190 - 18) // 6  # ~28 each for 6 value cols
+_D_ROW_H = 5.5  # row height
+_D_MAX_Y = 275  # must stay above this to leave room for footer
 
 
 def _draw_daily_detail_pages(
@@ -186,56 +192,80 @@ def _draw_daily_detail_pages(
     bill_title: str,
     period_label: str,
     t: dict[str, str],
+    language: str,
 ) -> None:
-    """Add page(s) with daily consumption/cost and production/revenue tables."""
-    is_host = bill.member.is_host
-    details = bill.daily_details
+    """Add page(s) with daily consumption/cost and production/revenue tables.
 
-    # --- Page: Daily consumption & cost ------------------------------------
+    For multi-month periods (quarterly / semi-annual / annual) the days are
+    grouped by month with a month sub-header and per-month subtotals so
+    that the listing fits neatly on paper.
+    """
+    from itertools import groupby
+
+    details = bill.daily_details
+    period_months = bill.period_months if bill.period_months else [(bill.year, bill.month)]
+    multi_month = len(period_months) > 1
+
+    # Group details by (year, month) – details are already in chronological order
+    month_groups: list[tuple[tuple[int, int], list[DailyDetail]]] = []
+    for key, group in groupby(details, key=lambda d: (d.year, d.month)):
+        month_groups.append((key, list(group)))
+
+    # --- Consumption pages -------------------------------------------------
+    _draw_daily_consumption_pages(
+        pdf, bill, collective_name, bill_title, period_label,
+        t, language, month_groups, multi_month,
+    )
+
+    # --- Production pages (if applicable) ----------------------------------
+    if bill.total_production_kwh > 0:
+        _draw_daily_production_pages(
+            pdf, bill, collective_name, bill_title, period_label,
+            t, language, month_groups, multi_month,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Page / section helpers for daily tables
+# ---------------------------------------------------------------------------
+
+
+def _start_daily_page(
+    pdf: FPDF,
+    bill_title: str,
+    collective_name: str,
+    member_name: str,
+    period_label: str,
+    section_title: str,
+    t: dict[str, str],
+) -> None:
+    """Add a new page and draw page header, member name, and section title."""
     pdf.add_page()
     pdf.set_auto_page_break(auto=False)
     _draw_header_bar(pdf, bill_title, collective_name)
     pdf.set_y(28)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(80, 80, 80)
-    pdf.cell(0, _LH, f"{bill.member.full_name}  -  {period_label}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, _LH, f"{member_name}  -  {period_label}", new_x="LMARGIN", new_y="NEXT")
     pdf.set_text_color(0, 0, 0)
     pdf.ln(1)
-
-    _section_header(pdf, t["daily_consumption_cost"])
-    _daily_consumption_table(pdf, details, bill.currency, t)
-    _draw_footer(pdf, t)
-
-    # --- Page: Daily production & revenue (any producer) -------------------
-    if bill.total_production_kwh > 0:
-        pdf.add_page()
-        pdf.set_auto_page_break(auto=False)
-        _draw_header_bar(pdf, bill_title, collective_name)
-        pdf.set_y(28)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(80, 80, 80)
-        pdf.cell(0, _LH, f"{bill.member.full_name}  -  {period_label}", new_x="LMARGIN", new_y="NEXT")
-        pdf.set_text_color(0, 0, 0)
-        pdf.ln(1)
-
-        _section_header(pdf, t["daily_production_revenue"])
-        _daily_production_table(pdf, details, bill.currency, t)
-        _draw_footer(pdf, t)
+    _section_header(pdf, section_title)
 
 
-# Daily table column widths
-_D_DAY = 18
-_D_VAL = (190 - 18) // 6  # ~28 each for 6 value cols
+def _draw_month_sub_header(pdf: FPDF, label: str) -> None:
+    """Draw a coloured month sub-header row spanning the full table width."""
+    pdf.set_fill_color(33, 60, 114)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.cell(_PAGE_W, 6, f"  {label}", fill=True)
+    pdf.ln(6)
+    pdf.set_text_color(0, 0, 0)
 
 
-def _daily_consumption_table(
-    pdf: FPDF, details: list[DailyDetail], currency: str, t: dict[str, str],
-) -> None:
-    """Draw a table: Day | Local kWh | Grid kWh | Total kWh | Local CHF | Grid CHF | Total CHF."""
+def _draw_consumption_col_headers(pdf: FPDF, currency: str, t: dict[str, str]) -> None:
+    """Draw the column header row for daily consumption tables."""
     col_w = _D_VAL
-    h = 5.5
-
-    # Header
+    h = _D_ROW_H
     pdf.set_fill_color(240, 242, 246)
     pdf.set_font("Helvetica", "B", 7)
     pdf.set_text_color(70, 70, 70)
@@ -249,58 +279,11 @@ def _daily_consumption_table(
     pdf.ln(h)
     pdf.set_text_color(0, 0, 0)
 
-    # Rows
-    pdf.set_font("Helvetica", "", 7)
-    tot_local = tot_bkw = tot_cons = 0.0
-    tot_local_c = tot_bkw_c = tot_total_c = 0.0
-    stripe = False
-    for d in details:
-        if stripe:
-            pdf.set_fill_color(250, 250, 252)
-            fill = True
-        else:
-            fill = False
-        stripe = not stripe
 
-        pdf.cell(_D_DAY, h, f"  {d.day:>2}", fill=fill)
-        pdf.cell(col_w, h, f"{d.local_consumption_kwh:,.0f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.bkw_consumption_kwh:,.0f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.total_consumption_kwh:,.0f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.local_cost:,.2f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.bkw_cost:,.2f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.total_cost:,.2f}", align="R", fill=fill)
-        pdf.ln(h)
-
-        tot_local += d.local_consumption_kwh
-        tot_bkw += d.bkw_consumption_kwh
-        tot_cons += d.total_consumption_kwh
-        tot_local_c += d.local_cost
-        tot_bkw_c += d.bkw_cost
-        tot_total_c += d.total_cost
-
-    # Total row
-    pdf.set_draw_color(200, 200, 200)
-    pdf.line(10, pdf.get_y(), 10 + _PAGE_W, pdf.get_y())
-    pdf.set_draw_color(0, 0, 0)
-    pdf.set_font("Helvetica", "B", 7)
-    pdf.cell(_D_DAY, h + 1, f"  {t['total']}")
-    pdf.cell(col_w, h + 1, f"{tot_local:,.0f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_bkw:,.0f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_cons:,.0f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_local_c:,.2f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_bkw_c:,.2f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_total_c:,.2f} {currency}", align="R")
-    pdf.ln(h + 1)
-
-
-def _daily_production_table(
-    pdf: FPDF, details: list[DailyDetail], currency: str, t: dict[str, str],
-) -> None:
-    """Draw: Day | Produced kWh | Local kWh | Grid kWh | Local CHF | Grid CHF | Total CHF."""
+def _draw_production_col_headers(pdf: FPDF, currency: str, t: dict[str, str]) -> None:
+    """Draw the column header row for daily production tables."""
     col_w = _D_VAL
-    h = 5.5
-
-    # Header
+    h = _D_ROW_H
     pdf.set_fill_color(240, 242, 246)
     pdf.set_font("Helvetica", "B", 7)
     pdf.set_text_color(70, 70, 70)
@@ -314,48 +297,257 @@ def _daily_production_table(
     pdf.ln(h)
     pdf.set_text_color(0, 0, 0)
 
-    # Rows
-    pdf.set_font("Helvetica", "", 7)
-    tot_prod = tot_local = tot_grid = 0.0
-    tot_local_r = tot_grid_r = tot_total_r = 0.0
-    stripe = False
-    for d in details:
-        if stripe:
-            pdf.set_fill_color(250, 250, 252)
-            fill = True
-        else:
-            fill = False
-        stripe = not stripe
 
-        pdf.cell(_D_DAY, h, f"  {d.day:>2}", fill=fill)
-        pdf.cell(col_w, h, f"{d.total_production_kwh:,.0f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.local_sell_kwh:,.0f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.bkw_export_kwh:,.0f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.local_sell_revenue:,.2f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.bkw_export_revenue:,.2f}", align="R", fill=fill)
-        pdf.cell(col_w, h, f"{d.total_revenue:,.2f}", align="R", fill=fill)
-        pdf.ln(h)
+def _draw_daily_total_row(
+    pdf: FPDF, label: str, vals: tuple[float, ...], currency: str, bold: bool = True,
+) -> None:
+    """Draw a totals/subtotals row with 6 numeric values.
 
-        tot_prod += d.total_production_kwh
-        tot_local += d.local_sell_kwh
-        tot_grid += d.bkw_export_kwh
-        tot_local_r += d.local_sell_revenue
-        tot_grid_r += d.bkw_export_revenue
-        tot_total_r += d.total_revenue
-
-    # Total row
+    *vals* order: v1_kwh, v2_kwh, v3_kwh, v4_chf, v5_chf, v6_chf.
+    """
+    col_w = _D_VAL
+    h = _D_ROW_H + 1
     pdf.set_draw_color(200, 200, 200)
     pdf.line(10, pdf.get_y(), 10 + _PAGE_W, pdf.get_y())
     pdf.set_draw_color(0, 0, 0)
-    pdf.set_font("Helvetica", "B", 7)
-    pdf.cell(_D_DAY, h + 1, f"  {t['total']}")
-    pdf.cell(col_w, h + 1, f"{tot_prod:,.0f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_local:,.0f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_grid:,.0f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_local_r:,.2f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_grid_r:,.2f}", align="R")
-    pdf.cell(col_w, h + 1, f"{tot_total_r:,.2f} {currency}", align="R")
-    pdf.ln(h + 1)
+    weight = "B" if bold else ""
+    pdf.set_font("Helvetica", weight, 7)
+    pdf.cell(_D_DAY, h, f"  {label}")
+    pdf.cell(col_w, h, f"{vals[0]:,.0f}", align="R")
+    pdf.cell(col_w, h, f"{vals[1]:,.0f}", align="R")
+    pdf.cell(col_w, h, f"{vals[2]:,.0f}", align="R")
+    pdf.cell(col_w, h, f"{vals[3]:,.2f}", align="R")
+    pdf.cell(col_w, h, f"{vals[4]:,.2f}", align="R")
+    pdf.cell(col_w, h, f"{vals[5]:,.2f} {currency}", align="R")
+    pdf.ln(h)
+
+
+# ---------------------------------------------------------------------------
+# Daily consumption pages (grouped by month)
+# ---------------------------------------------------------------------------
+
+
+def _draw_daily_consumption_pages(
+    pdf: FPDF,
+    bill: MemberBill,
+    collective_name: str,
+    bill_title: str,
+    period_label: str,
+    t: dict[str, str],
+    language: str,
+    month_groups: list[tuple[tuple[int, int], list[DailyDetail]]],
+    multi_month: bool,
+) -> None:
+    member_name = bill.member.full_name
+    section_title = t["daily_consumption_cost"]
+    currency = bill.currency
+    col_w = _D_VAL
+    h = _D_ROW_H
+
+    # Grand totals
+    g_local = g_bkw = g_cons = 0.0
+    g_local_c = g_bkw_c = g_total_c = 0.0
+
+    for mi, ((year, month), days) in enumerate(month_groups):
+        # Calculate space needed for this month block
+        needed = len(days) * h
+        if multi_month:
+            needed += 6  # month sub-header
+            needed += h + 1  # subtotal row
+        # Column headers if this is the first block or a new page
+        col_hdr_h = h  # column header height
+
+        if mi == 0:
+            # First month – start fresh page
+            _start_daily_page(pdf, bill_title, collective_name, member_name, period_label, section_title, t)
+            _draw_consumption_col_headers(pdf, currency, t)
+        else:
+            # Subsequent months – check if block fits on current page
+            space_left = _D_MAX_Y - pdf.get_y()
+            if needed + 4 > space_left:
+                # Need a new page
+                _draw_footer(pdf, t)
+                _start_daily_page(pdf, bill_title, collective_name, member_name, period_label, section_title, t)
+                _draw_consumption_col_headers(pdf, currency, t)
+            else:
+                pdf.ln(2)  # small gap between months on same page
+
+        # Month sub-header (only for multi-month periods)
+        if multi_month:
+            month_label = f"{get_month_name(language, month)} {year}"
+            _draw_month_sub_header(pdf, month_label)
+
+        # Data rows
+        s_local = s_bkw = s_cons = 0.0
+        s_local_c = s_bkw_c = s_total_c = 0.0
+        stripe = False
+
+        for d in days:
+            # Safety: per-row page overflow check
+            if pdf.get_y() + h > _D_MAX_Y:
+                _draw_footer(pdf, t)
+                _start_daily_page(pdf, bill_title, collective_name, member_name, period_label, section_title, t)
+                _draw_consumption_col_headers(pdf, currency, t)
+                if multi_month:
+                    month_label = f"{get_month_name(language, month)} {year}"
+                    _draw_month_sub_header(pdf, f"{month_label} …")
+
+            if stripe:
+                pdf.set_fill_color(250, 250, 252)
+                fill = True
+            else:
+                fill = False
+            stripe = not stripe
+
+            pdf.set_font("Helvetica", "", 7)
+            pdf.cell(_D_DAY, h, f"  {d.day:>2}", fill=fill)
+            pdf.cell(col_w, h, f"{d.local_consumption_kwh:,.0f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.bkw_consumption_kwh:,.0f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.total_consumption_kwh:,.0f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.local_cost:,.2f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.bkw_cost:,.2f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.total_cost:,.2f}", align="R", fill=fill)
+            pdf.ln(h)
+
+            s_local += d.local_consumption_kwh
+            s_bkw += d.bkw_consumption_kwh
+            s_cons += d.total_consumption_kwh
+            s_local_c += d.local_cost
+            s_bkw_c += d.bkw_cost
+            s_total_c += d.total_cost
+
+        g_local += s_local
+        g_bkw += s_bkw
+        g_cons += s_cons
+        g_local_c += s_local_c
+        g_bkw_c += s_bkw_c
+        g_total_c += s_total_c
+
+        # Month subtotal (only for multi-month)
+        if multi_month:
+            _draw_daily_total_row(
+                pdf, t["subtotal"],
+                (s_local, s_bkw, s_cons, s_local_c, s_bkw_c, s_total_c),
+                currency, bold=False,
+            )
+
+    # Grand total
+    _draw_daily_total_row(
+        pdf, t["total"],
+        (g_local, g_bkw, g_cons, g_local_c, g_bkw_c, g_total_c),
+        currency, bold=True,
+    )
+    _draw_footer(pdf, t)
+
+
+# ---------------------------------------------------------------------------
+# Daily production pages (grouped by month)
+# ---------------------------------------------------------------------------
+
+
+def _draw_daily_production_pages(
+    pdf: FPDF,
+    bill: MemberBill,
+    collective_name: str,
+    bill_title: str,
+    period_label: str,
+    t: dict[str, str],
+    language: str,
+    month_groups: list[tuple[tuple[int, int], list[DailyDetail]]],
+    multi_month: bool,
+) -> None:
+    member_name = bill.member.full_name
+    section_title = t["daily_production_revenue"]
+    currency = bill.currency
+    col_w = _D_VAL
+    h = _D_ROW_H
+
+    # Grand totals
+    g_prod = g_local = g_grid = 0.0
+    g_local_r = g_grid_r = g_total_r = 0.0
+
+    for mi, ((year, month), days) in enumerate(month_groups):
+        # Calculate space needed for this month block
+        needed = len(days) * h
+        if multi_month:
+            needed += 6  # month sub-header
+            needed += h + 1  # subtotal row
+
+        if mi == 0:
+            _start_daily_page(pdf, bill_title, collective_name, member_name, period_label, section_title, t)
+            _draw_production_col_headers(pdf, currency, t)
+        else:
+            space_left = _D_MAX_Y - pdf.get_y()
+            if needed + 4 > space_left:
+                _draw_footer(pdf, t)
+                _start_daily_page(pdf, bill_title, collective_name, member_name, period_label, section_title, t)
+                _draw_production_col_headers(pdf, currency, t)
+            else:
+                pdf.ln(2)
+
+        if multi_month:
+            month_label = f"{get_month_name(language, month)} {year}"
+            _draw_month_sub_header(pdf, month_label)
+
+        # Data rows
+        s_prod = s_local = s_grid = 0.0
+        s_local_r = s_grid_r = s_total_r = 0.0
+        stripe = False
+
+        for d in days:
+            if pdf.get_y() + h > _D_MAX_Y:
+                _draw_footer(pdf, t)
+                _start_daily_page(pdf, bill_title, collective_name, member_name, period_label, section_title, t)
+                _draw_production_col_headers(pdf, currency, t)
+                if multi_month:
+                    month_label = f"{get_month_name(language, month)} {year}"
+                    _draw_month_sub_header(pdf, f"{month_label} …")
+
+            if stripe:
+                pdf.set_fill_color(250, 250, 252)
+                fill = True
+            else:
+                fill = False
+            stripe = not stripe
+
+            pdf.set_font("Helvetica", "", 7)
+            pdf.cell(_D_DAY, h, f"  {d.day:>2}", fill=fill)
+            pdf.cell(col_w, h, f"{d.total_production_kwh:,.0f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.local_sell_kwh:,.0f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.bkw_export_kwh:,.0f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.local_sell_revenue:,.2f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.bkw_export_revenue:,.2f}", align="R", fill=fill)
+            pdf.cell(col_w, h, f"{d.total_revenue:,.2f}", align="R", fill=fill)
+            pdf.ln(h)
+
+            s_prod += d.total_production_kwh
+            s_local += d.local_sell_kwh
+            s_grid += d.bkw_export_kwh
+            s_local_r += d.local_sell_revenue
+            s_grid_r += d.bkw_export_revenue
+            s_total_r += d.total_revenue
+
+        g_prod += s_prod
+        g_local += s_local
+        g_grid += s_grid
+        g_local_r += s_local_r
+        g_grid_r += s_grid_r
+        g_total_r += s_total_r
+
+        if multi_month:
+            _draw_daily_total_row(
+                pdf, t["subtotal"],
+                (s_prod, s_local, s_grid, s_local_r, s_grid_r, s_total_r),
+                currency, bold=False,
+            )
+
+    # Grand total
+    _draw_daily_total_row(
+        pdf, t["total"],
+        (g_prod, g_local, g_grid, g_local_r, g_grid_r, g_total_r),
+        currency, bold=True,
+    )
+    _draw_footer(pdf, t)
 
 
 # ===========================================================================

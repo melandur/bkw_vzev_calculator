@@ -375,17 +375,11 @@ def _members_section() -> None:
                     else:
                         return t["meter_production_physical"] if is_prod else t["meter_consumption_physical"]
 
-                # Check which meters already exist
-                has_consumption = any(not m.get("is_production", False) for m in meters)
-                has_production = any(m.get("is_production", False) for m in meters)
-
                 for j, meter in enumerate(meters):
                     is_prod = meter.get("is_production", False)
-                    is_virt = is_host  # Host = virtual, Member = physical
+                    is_virt = meter.get("is_virtual", False)
 
-                    # Set the fixed values
-                    meter["is_virtual"] = is_virt
-                    meter["is_production"] = is_prod
+                    # Set the name based on actual flags
                     meter["name"] = _get_meter_name(is_prod, is_virt)
 
                     # Display meter with name label and external ID input
@@ -408,36 +402,72 @@ def _members_section() -> None:
                     if j < len(meters) - 1:
                         st.divider()
 
-                # Add meter buttons - show only what's missing
-                btn_col1, btn_col2 = st.columns(2)
+                # Determine which meter types already exist
+                current_meters = meters  # bind for closure
+                def _has_meter(prod: bool, virt: bool) -> bool:
+                    return any(
+                        m.get("is_production", False) == prod and m.get("is_virtual", False) == virt
+                        for m in current_meters
+                    )
 
-                # Add consumption meter button
-                if not has_consumption:
-                    if btn_col1.button(t["add_consumption_meter"], key=f"m{i}_add_cons", use_container_width=True):
-                        meters.append(
-                            {
-                                "external_id": "",
-                                "name": _get_meter_name(False, is_host),
-                                "is_production": False,
-                                "is_virtual": is_host,
-                            }
-                        )
-                        st.session_state["_keep_member_expanded"] = i
-                        st.rerun(scope="fragment")
+                if is_host:
+                    # Host needs 4 meters: physical + virtual, consumption + production
+                    # Max 4 meters for host
+                    missing = []
+                    if not _has_meter(False, False):
+                        missing.append((False, False))  # Consumption Physical
+                    if not _has_meter(True, False):
+                        missing.append((True, False))  # Production Physical
+                    if not _has_meter(False, True):
+                        missing.append((False, True))  # Consumption Virtual
+                    if not _has_meter(True, True):
+                        missing.append((True, True))  # Production Virtual
 
-                # Add production meter button
-                if not has_production:
-                    if btn_col2.button(t["add_production_meter"], key=f"m{i}_add_prod", use_container_width=True):
-                        meters.append(
-                            {
-                                "external_id": "",
-                                "name": _get_meter_name(True, is_host),
-                                "is_production": True,
-                                "is_virtual": is_host,
-                            }
-                        )
-                        st.session_state["_keep_member_expanded"] = i
-                        st.rerun(scope="fragment")
+                    if missing:
+                        cols = st.columns(len(missing))
+                        for col_idx, (is_prod, is_virt) in enumerate(missing):
+                            name = _get_meter_name(is_prod, is_virt)
+                            if cols[col_idx].button(f"+ {name}", key=f"m{i}_add_{is_prod}_{is_virt}", use_container_width=True):
+                                meters.append(
+                                    {
+                                        "external_id": "",
+                                        "name": name,
+                                        "is_production": is_prod,
+                                        "is_virtual": is_virt,
+                                    }
+                                )
+                                st.session_state["_keep_member_expanded"] = i
+                                st.rerun(scope="fragment")
+                else:
+                    # Member: physical consumption (required) + optional physical production
+                    # Max 2 meters for member
+                    btn_col1, btn_col2 = st.columns(2)
+
+                    if not _has_meter(False, False):
+                        if btn_col1.button(t["add_consumption_meter"], key=f"m{i}_add_cons", use_container_width=True):
+                            meters.append(
+                                {
+                                    "external_id": "",
+                                    "name": _get_meter_name(False, False),
+                                    "is_production": False,
+                                    "is_virtual": False,
+                                }
+                            )
+                            st.session_state["_keep_member_expanded"] = i
+                            st.rerun(scope="fragment")
+
+                    if not _has_meter(True, False):
+                        if btn_col2.button(t["add_production_meter"], key=f"m{i}_add_prod", use_container_width=True):
+                            meters.append(
+                                {
+                                    "external_id": "",
+                                    "name": _get_meter_name(True, False),
+                                    "is_production": True,
+                                    "is_virtual": False,
+                                }
+                            )
+                            st.session_state["_keep_member_expanded"] = i
+                            st.rerun(scope="fragment")
 
                 # Remove member button - separate section with visual warning
                 st.markdown("---")
@@ -557,11 +587,13 @@ def _actions_section() -> None:
         _CONFIG_PATH.write_text(toml_str, encoding="utf-8")
         st.success(t["saved_to"].format(path=_CONFIG_PATH))
 
-    # ---- Run pipeline ----
+    # ---- Run pipeline (save first, then run) ----
     if col2.button(t["run_pipeline"], use_container_width=True):
-        if not _CONFIG_PATH.exists():
-            st.error(t["config_not_found"])
-            return
+        # Auto-save config before running
+        s = st.session_state["settings"]
+        coll = dict(st.session_state["collective"])
+        toml_str = _serialize_toml(s, coll, st.session_state["members"])
+        _CONFIG_PATH.write_text(toml_str, encoding="utf-8")
 
         log_buffer = io.StringIO()
         sink_id = logger.add(
