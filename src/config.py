@@ -65,7 +65,26 @@ def _validate(config: AppConfig) -> None:
         logger.error("Multiple members have is_host = true — only one host is allowed")
         sys.exit(1)
 
+    # Path checks — empty strings are fatal, missing csv_directory is a warning
+    if not config.settings.csv_directory.strip():
+        logger.error("csv_directory is empty")
+        sys.exit(1)
+    if not config.settings.output_directory.strip():
+        logger.error("output_directory is empty")
+        sys.exit(1)
+    if not config.settings.database_path.strip():
+        logger.error("database_path is empty")
+        sys.exit(1)
+
+    csv_dir = Path(config.settings.csv_directory)
+    if not csv_dir.is_dir():
+        logger.warning(
+            "csv_directory does not exist: {} - no data will be imported", csv_dir
+        )
+
     if config.collective.local_rate == 0.0:
-        logger.warning("Collective local_rate is 0 — local solar costs/revenue will be zero")
+        logger.warning(
+            "Collective local_rate is 0 — local solar costs/revenue will be zero"
+        )
     if config.collective.bkw_buy_rate == 0.0:
         logger.warning("Collective bkw_buy_rate is 0 — grid costs will be zero")

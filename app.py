@@ -18,9 +18,32 @@ from src.translations import get_gui_translations
 _CONFIG_PATH = Path("config.toml")
 _LANGUAGES = ["en", "de", "fr", "it"]
 _CANTONS = [
-    "AG", "AI", "AR", "BE", "BL", "BS", "FR", "GE", "GL", "GR",
-    "JU", "LU", "NE", "NW", "OW", "SG", "SH", "SO", "SZ", "TG",
-    "TI", "UR", "VD", "VS", "ZG", "ZH",
+    "AG",
+    "AI",
+    "AR",
+    "BE",
+    "BL",
+    "BS",
+    "FR",
+    "GE",
+    "GL",
+    "GR",
+    "JU",
+    "LU",
+    "NE",
+    "NW",
+    "OW",
+    "SG",
+    "SH",
+    "SO",
+    "SZ",
+    "TG",
+    "TI",
+    "UR",
+    "VD",
+    "VS",
+    "ZG",
+    "ZH",
 ]
 
 
@@ -44,9 +67,9 @@ def _load_config_dict() -> dict:
             "name": "My vZEV",
             "language": "en",
             "show_daily_detail": False,
-            "bill_months": [],
-            "period_start": "2025-01-01",
-            "period_end": "2025-12-31",
+            "billing_start": "2025-01",
+            "billing_end": "2025-12",
+            "billing_interval": "monthly",
             "local_rate": 0.16,
             "bkw_buy_rate": 0.2816,
             "bkw_sell_rate": 0.1311,
@@ -55,13 +78,20 @@ def _load_config_dict() -> dict:
     }
 
 
-def _to_date(val) -> date:
-    """Convert various date representations to a date object."""
-    if isinstance(val, date) and not isinstance(val, datetime):
-        return val
-    if isinstance(val, datetime):
-        return val.date()
-    return date.fromisoformat(str(val))
+_BILLING_INTERVALS = ["monthly", "quarterly", "semi_annual", "annual"]
+_YEARS = [str(y) for y in range(2020, 2036)]
+_MONTHS = [f"{m:02d}" for m in range(1, 13)]
+
+
+def _parse_billing_month(value: str) -> tuple[str, str]:
+    """Parse 'YYYY-MM' into (year, month) strings."""
+    try:
+        parts = value.split("-")
+        if len(parts) == 2:
+            return parts[0], parts[1]
+    except (ValueError, AttributeError):
+        pass
+    return "2025", "01"
 
 
 def _serialize_toml(settings: dict, collective: dict, members: list[dict]) -> str:
@@ -82,15 +112,12 @@ def _serialize_toml(settings: dict, collective: dict, members: list[dict]) -> st
     lines.append("[collective]")
     lines.append(f"name = {_q(collective['name'])}")
     lines.append(f"language = {_q(collective['language'])}")
-    lines.append(f"show_daily_detail = {'true' if collective['show_daily_detail'] else 'false'}")
-    bm = collective.get("bill_months", [])
-    if bm:
-        items = ", ".join(_q(m) for m in bm)
-        lines.append(f"bill_months = [{items}]")
-    else:
-        lines.append("bill_months = []")
-    lines.append(f"period_start = {collective['period_start']}")
-    lines.append(f"period_end = {collective['period_end']}")
+    lines.append(
+        f"show_daily_detail = {'true' if collective['show_daily_detail'] else 'false'}"
+    )
+    lines.append(f"billing_start = {_q(collective['billing_start'])}")
+    lines.append(f"billing_end = {_q(collective['billing_end'])}")
+    lines.append(f"billing_interval = {_q(collective['billing_interval'])}")
     lines.append(f"local_rate = {collective['local_rate']}")
     lines.append(f"bkw_buy_rate = {collective['bkw_buy_rate']}")
     lines.append(f"bkw_sell_rate = {collective['bkw_sell_rate']}")
@@ -100,7 +127,9 @@ def _serialize_toml(settings: dict, collective: dict, members: list[dict]) -> st
     for member in members:
         lines.append("# " + "-" * 77)
         label = "Host" if member.get("is_host") else "Member"
-        lines.append(f"# {label} - {member.get('first_name', '')} {member.get('last_name', '')}")
+        lines.append(
+            f"# {label} - {member.get('first_name', '')} {member.get('last_name', '')}"
+        )
         lines.append("# " + "-" * 77)
         lines.append("")
         lines.append("[[members]]")
@@ -117,8 +146,12 @@ def _serialize_toml(settings: dict, collective: dict, members: list[dict]) -> st
             lines.append("[[members.meters]]")
             lines.append(f"external_id = {_q(meter['external_id'])}")
             lines.append(f"name = {_q(meter['name'])}")
-            lines.append(f"is_production = {'true' if meter.get('is_production') else 'false'}")
-            lines.append(f"is_virtual = {'true' if meter.get('is_virtual') else 'false'}")
+            lines.append(
+                f"is_production = {'true' if meter.get('is_production') else 'false'}"
+            )
+            lines.append(
+                f"is_virtual = {'true' if meter.get('is_virtual') else 'false'}"
+            )
             lines.append("")
 
     return "\n".join(lines)
@@ -139,8 +172,10 @@ def _init_state() -> None:
     st.session_state["settings"] = cfg.get("settings", {})
 
     coll = cfg.get("collective", {})
-    coll["period_start"] = _to_date(coll.get("period_start", "2025-01-01"))
-    coll["period_end"] = _to_date(coll.get("period_end", "2025-12-31"))
+    # Ensure new fields have defaults
+    coll.setdefault("billing_start", "2025-01")
+    coll.setdefault("billing_end", "2025-12")
+    coll.setdefault("billing_interval", "monthly")
     st.session_state["collective"] = coll
     st.session_state["app_language"] = coll.get("language", "en")
 
@@ -177,102 +212,323 @@ def _sidebar() -> None:
 
     st.sidebar.header(t["settings"])
     s = st.session_state["settings"]
-    s["csv_directory"] = st.sidebar.text_input(t["csv_directory"], value=s.get("csv_directory", "./data"))
-    s["output_directory"] = st.sidebar.text_input(t["output_directory"], value=s.get("output_directory", "./output"))
-    s["database_path"] = st.sidebar.text_input(t["database_path"], value=s.get("database_path", "./vzev.db"))
+    s["csv_directory"] = st.sidebar.text_input(
+        t["csv_directory"], value=s.get("csv_directory", "./data")
+    )
+    s["output_directory"] = st.sidebar.text_input(
+        t["output_directory"], value=s.get("output_directory", "./output")
+    )
+    s["database_path"] = st.sidebar.text_input(
+        t["database_path"], value=s.get("database_path", "./vzev.db")
+    )
 
     st.sidebar.divider()
     st.sidebar.header(t["collective"])
     c = st.session_state["collective"]
     c["name"] = st.sidebar.text_input(t["name"], value=c.get("name", ""))
-    c["show_daily_detail"] = st.sidebar.checkbox(t["show_daily_detail"], value=c.get("show_daily_detail", False))
+    c["show_daily_detail"] = st.sidebar.checkbox(
+        t["show_daily_detail"], value=c.get("show_daily_detail", False)
+    )
 
-    bm_str = ", ".join(c.get("bill_months", []))
-    bm_input = st.sidebar.text_input(t["bill_months"], value=bm_str)
-    c["bill_months"] = [x.strip() for x in bm_input.split(",") if x.strip()] if bm_input.strip() else []
+    # Billing start: year and month dropdowns
+    st.sidebar.markdown(f"**{t['billing_start']}**")
+    start_year, start_month = _parse_billing_month(c.get("billing_start", "2025-01"))
+    start_year_idx = _YEARS.index(start_year) if start_year in _YEARS else 5
+    start_month_idx = _MONTHS.index(start_month) if start_month in _MONTHS else 0
+    col_sy, col_sm = st.sidebar.columns(2)
+    start_year_sel = col_sy.selectbox(
+        t["year"], _YEARS, index=start_year_idx, key="billing_start_year", label_visibility="collapsed"
+    )
+    start_month_sel = col_sm.selectbox(
+        t["month"], _MONTHS, index=start_month_idx, key="billing_start_month", label_visibility="collapsed"
+    )
+    c["billing_start"] = f"{start_year_sel}-{start_month_sel}"
 
-    c["period_start"] = st.sidebar.date_input(t["period_start"], value=c.get("period_start", date(2025, 1, 1)))
-    c["period_end"] = st.sidebar.date_input(t["period_end"], value=c.get("period_end", date(2025, 12, 31)))
+    # Billing end: year and month dropdowns
+    st.sidebar.markdown(f"**{t['billing_end']}**")
+    end_year, end_month = _parse_billing_month(c.get("billing_end", "2025-12"))
+    end_year_idx = _YEARS.index(end_year) if end_year in _YEARS else 5
+    end_month_idx = _MONTHS.index(end_month) if end_month in _MONTHS else 11
+    col_ey, col_em = st.sidebar.columns(2)
+    end_year_sel = col_ey.selectbox(
+        t["year"], _YEARS, index=end_year_idx, key="billing_end_year", label_visibility="collapsed"
+    )
+    end_month_sel = col_em.selectbox(
+        t["month"], _MONTHS, index=end_month_idx, key="billing_end_month", label_visibility="collapsed"
+    )
+    c["billing_end"] = f"{end_year_sel}-{end_month_sel}"
+
+    interval_val = c.get("billing_interval", "monthly")
+    interval_idx = _BILLING_INTERVALS.index(interval_val) if interval_val in _BILLING_INTERVALS else 0
+    c["billing_interval"] = st.sidebar.selectbox(
+        t["billing_interval"], _BILLING_INTERVALS, index=interval_idx
+    )
 
     st.sidebar.divider()
     st.sidebar.header(t["rates"])
-    c["local_rate"] = st.sidebar.number_input(t["local_rate"], value=float(c.get("local_rate", 0.0)), format="%.4f", step=0.01)
-    c["bkw_buy_rate"] = st.sidebar.number_input(t["bkw_buy_rate"], value=float(c.get("bkw_buy_rate", 0.0)), format="%.4f", step=0.01)
-    c["bkw_sell_rate"] = st.sidebar.number_input(t["bkw_sell_rate"], value=float(c.get("bkw_sell_rate", 0.0)), format="%.4f", step=0.01)
+    c["local_rate"] = st.sidebar.number_input(
+        t["local_rate"], value=float(c.get("local_rate", 0.0)), format="%.4f", step=0.01
+    )
+    c["bkw_buy_rate"] = st.sidebar.number_input(
+        t["bkw_buy_rate"],
+        value=float(c.get("bkw_buy_rate", 0.0)),
+        format="%.4f",
+        step=0.01,
+    )
+    c["bkw_sell_rate"] = st.sidebar.number_input(
+        t["bkw_sell_rate"],
+        value=float(c.get("bkw_sell_rate", 0.0)),
+        format="%.4f",
+        step=0.01,
+    )
 
 
 def _members_section() -> None:
     """Render the members and meters editor."""
     t = _gui_lang()
     st.header(t["members"])
+
+    # Render member editing as a fragment to preserve expander state on widget changes
+    @st.fragment
+    def _render_members():
+        members = st.session_state["members"]
+
+        # Track which member should be expanded (new member or meter action)
+        expand_member_idx = st.session_state.pop("_new_member_idx", None)
+        if expand_member_idx is None:
+            expand_member_idx = st.session_state.pop("_keep_member_expanded", None)
+
+        for i, member in enumerate(members):
+            role = t["host"] if member.get("is_host") else t["member"]
+            label = f"[{role}] {member.get('first_name', '')} {member.get('last_name', '')}"
+
+            # Expand if this member was just added or had meter changes
+            force_expand = (i == expand_member_idx)
+
+            with st.expander(label, expanded=force_expand):
+                col1, col2 = st.columns(2)
+                member["first_name"] = col1.text_input(
+                    t["first_name"],
+                    value=member.get("first_name", ""),
+                    key=f"m{i}_fn",
+                    placeholder=t["placeholder_first_name"],
+                )
+                member["last_name"] = col2.text_input(
+                    t["last_name"],
+                    value=member.get("last_name", ""),
+                    key=f"m{i}_ln",
+                    placeholder=t["placeholder_last_name"],
+                )
+
+                col3, col4, col5 = st.columns(3)
+                member["street"] = col3.text_input(
+                    t["street"],
+                    value=member.get("street", ""),
+                    key=f"m{i}_st",
+                    placeholder=t["placeholder_street"],
+                )
+                member["zip"] = col4.text_input(
+                    t["zip"],
+                    value=member.get("zip", ""),
+                    key=f"m{i}_zip",
+                    placeholder=t["placeholder_zip"],
+                )
+                member["city"] = col5.text_input(
+                    t["city"],
+                    value=member.get("city", ""),
+                    key=f"m{i}_city",
+                    placeholder=t["placeholder_city"],
+                )
+
+                col6, col7 = st.columns(2)
+                canton_val = member.get("canton", "BE")
+                canton_idx = _CANTONS.index(canton_val) if canton_val in _CANTONS else 0
+                member["canton"] = col6.selectbox(
+                    t["canton"], _CANTONS, index=canton_idx, key=f"m{i}_canton"
+                )
+
+                # Check if another member is already host
+                other_host_exists = any(
+                    m.get("is_host", False) for idx, m in enumerate(members) if idx != i
+                )
+                is_host_disabled = other_host_exists and not member.get("is_host", False)
+
+                if is_host_disabled:
+                    col7.checkbox(
+                        t["is_host"], value=False, key=f"m{i}_host", disabled=True,
+                        help=t["only_one_host"]
+                    )
+                else:
+                    member["is_host"] = col7.checkbox(
+                        t["is_host"], value=member.get("is_host", False), key=f"m{i}_host"
+                    )
+
+                # Meters
+                st.markdown(f"**{t['meters']}**")
+                meters = member.get("meters", [])
+                is_host = member.get("is_host", False)
+
+                # Determine meter name based on type
+                def _get_meter_name(is_prod: bool, is_virt: bool) -> str:
+                    if is_virt:
+                        return t["meter_production_virtual"] if is_prod else t["meter_consumption_virtual"]
+                    else:
+                        return t["meter_production_physical"] if is_prod else t["meter_consumption_physical"]
+
+                # Check which meters already exist
+                has_consumption = any(not m.get("is_production", False) for m in meters)
+                has_production = any(m.get("is_production", False) for m in meters)
+
+                for j, meter in enumerate(meters):
+                    is_prod = meter.get("is_production", False)
+                    is_virt = is_host  # Host = virtual, Member = physical
+
+                    # Set the fixed values
+                    meter["is_virtual"] = is_virt
+                    meter["is_production"] = is_prod
+                    meter["name"] = _get_meter_name(is_prod, is_virt)
+
+                    # Display meter with name label and external ID input
+                    meter_label = _get_meter_name(is_prod, is_virt)
+                    st.markdown(f"**{meter_label}**")
+
+                    mc1, mc2 = st.columns([4, 1])
+                    meter["external_id"] = mc1.text_input(
+                        t["external_id"],
+                        value=meter.get("external_id", ""),
+                        key=f"m{i}_mt{j}_eid",
+                        placeholder=t["placeholder_external_id"],
+                        label_visibility="collapsed",
+                    )
+                    if mc2.button(t["remove_meter"], key=f"m{i}_mt{j}_rm", use_container_width=True):
+                        # Set pending meter deletion for confirmation
+                        st.session_state["_pending_delete_meter"] = (i, j)
+                        st.rerun()  # Full rerun to show dialog
+
+                    if j < len(meters) - 1:
+                        st.divider()
+
+                # Add meter buttons - show only what's missing
+                btn_col1, btn_col2 = st.columns(2)
+
+                # Add consumption meter button
+                if not has_consumption:
+                    if btn_col1.button(t["add_consumption_meter"], key=f"m{i}_add_cons", use_container_width=True):
+                        meters.append(
+                            {
+                                "external_id": "",
+                                "name": _get_meter_name(False, is_host),
+                                "is_production": False,
+                                "is_virtual": is_host,
+                            }
+                        )
+                        st.session_state["_keep_member_expanded"] = i
+                        st.rerun(scope="fragment")
+
+                # Add production meter button
+                if not has_production:
+                    if btn_col2.button(t["add_production_meter"], key=f"m{i}_add_prod", use_container_width=True):
+                        meters.append(
+                            {
+                                "external_id": "",
+                                "name": _get_meter_name(True, is_host),
+                                "is_production": True,
+                                "is_virtual": is_host,
+                            }
+                        )
+                        st.session_state["_keep_member_expanded"] = i
+                        st.rerun(scope="fragment")
+
+                # Remove member button - separate section with visual warning
+                st.markdown("---")
+                _, rm_col, _ = st.columns([2, 1, 2])
+                if rm_col.button(
+                    t["remove_member"],
+                    key=f"m{i}_rm",
+                    type="secondary",
+                    use_container_width=True,
+                ):
+                    # Set pending deletion for confirmation
+                    st.session_state["_pending_delete_member"] = i
+                    st.rerun()  # Full rerun to show dialog
+
+        # Confirmation dialog for member deletion
+        pending_delete = st.session_state.get("_pending_delete_member")
+        if pending_delete is not None and pending_delete < len(members):
+            member_to_delete = members[pending_delete]
+            member_name = f"{member_to_delete.get('first_name', '')} {member_to_delete.get('last_name', '')}".strip() or t["member"]
+
+            @st.dialog(t["confirm_delete_member"])
+            def _confirm_delete_member_dialog():
+                st.warning(f"{t['confirm_delete_member_msg']}\n\n**{member_name}**")
+                col1, col2 = st.columns(2)
+                if col1.button(t["cancel"], use_container_width=True, key="cancel_member_delete"):
+                    st.session_state.pop("_pending_delete_member", None)
+                    st.rerun()
+                if col2.button(t["yes_delete"], type="primary", use_container_width=True, key="confirm_member_delete"):
+                    idx = st.session_state.pop("_pending_delete_member", None)
+                    if idx is not None and idx < len(members):
+                        members.pop(idx)
+                    st.rerun()
+
+            _confirm_delete_member_dialog()
+
+        # Confirmation dialog for meter deletion
+        pending_meter_delete = st.session_state.get("_pending_delete_meter")
+        if pending_meter_delete is not None:
+            member_idx, meter_idx = pending_meter_delete
+            if member_idx < len(members):
+                member_meters = members[member_idx].get("meters", [])
+                if meter_idx < len(member_meters):
+                    meter_to_delete = member_meters[meter_idx]
+                    meter_name = meter_to_delete.get("name", "") or meter_to_delete.get("external_id", "") or t["meters"]
+
+                    @st.dialog(t["confirm_delete_meter"])
+                    def _confirm_delete_meter_dialog():
+                        st.warning(f"{t['confirm_delete_meter_msg']}\n\n**{meter_name}**")
+                        col1, col2 = st.columns(2)
+                        if col1.button(t["cancel"], use_container_width=True, key="cancel_meter_delete"):
+                            st.session_state.pop("_pending_delete_meter", None)
+                            st.rerun()
+                        if col2.button(t["yes_delete"], type="primary", use_container_width=True, key="confirm_meter_delete"):
+                            m_idx, mt_idx = st.session_state.pop("_pending_delete_meter", (None, None))
+                            if m_idx is not None and mt_idx is not None:
+                                if m_idx < len(members):
+                                    m_meters = members[m_idx].get("meters", [])
+                                    if mt_idx < len(m_meters):
+                                        m_meters.pop(mt_idx)
+                                # Keep this member expanded after deletion
+                                st.session_state["_keep_member_expanded"] = m_idx
+                            st.rerun()
+
+                    _confirm_delete_meter_dialog()
+
+    _render_members()
+
+    # Add member button (outside the fragment)
     members = st.session_state["members"]
-
-    to_remove_member = None
-
-    for i, member in enumerate(members):
-        role = t["host"] if member.get("is_host") else t["member"]
-        label = f"[{role}] {member.get('first_name', '')} {member.get('last_name', '')}"
-        with st.expander(label, expanded=False):
-            col1, col2 = st.columns(2)
-            member["first_name"] = col1.text_input(t["first_name"], value=member.get("first_name", ""), key=f"m{i}_fn")
-            member["last_name"] = col2.text_input(t["last_name"], value=member.get("last_name", ""), key=f"m{i}_ln")
-
-            col3, col4, col5 = st.columns(3)
-            member["street"] = col3.text_input(t["street"], value=member.get("street", ""), key=f"m{i}_st")
-            member["zip"] = col4.text_input(t["zip"], value=member.get("zip", ""), key=f"m{i}_zip")
-            member["city"] = col5.text_input(t["city"], value=member.get("city", ""), key=f"m{i}_city")
-
-            col6, col7 = st.columns(2)
-            canton_val = member.get("canton", "BE")
-            canton_idx = _CANTONS.index(canton_val) if canton_val in _CANTONS else 0
-            member["canton"] = col6.selectbox(t["canton"], _CANTONS, index=canton_idx, key=f"m{i}_canton")
-            member["is_host"] = col7.checkbox(t["is_host"], value=member.get("is_host", False), key=f"m{i}_host")
-
-            # Meters
-            st.markdown(f"**{t['meters']}**")
-            meters = member.get("meters", [])
-            to_remove_meter = None
-
-            for j, meter in enumerate(meters):
-                mc1, mc2 = st.columns([3, 2])
-                meter["external_id"] = mc1.text_input(t["external_id"], value=meter.get("external_id", ""), key=f"m{i}_mt{j}_eid")
-                meter["name"] = mc2.text_input(t["name"], value=meter.get("name", ""), key=f"m{i}_mt{j}_name")
-
-                mc3, mc4, mc5 = st.columns(3)
-                meter["is_production"] = mc3.checkbox(t["production"], value=meter.get("is_production", False), key=f"m{i}_mt{j}_prod")
-                meter["is_virtual"] = mc4.checkbox(t["virtual"], value=meter.get("is_virtual", False), key=f"m{i}_mt{j}_virt")
-                if mc5.button(t["remove_meter"], key=f"m{i}_mt{j}_rm"):
-                    to_remove_meter = j
-
-                if j < len(meters) - 1:
-                    st.divider()
-
-            if to_remove_meter is not None:
-                meters.pop(to_remove_meter)
-                st.rerun()
-
-            bc1, bc2 = st.columns(2)
-            if bc1.button(t["add_meter"], key=f"m{i}_add_mt"):
-                meters.append({"external_id": "", "name": "", "is_production": False, "is_virtual": False})
-                st.rerun()
-            if bc2.button(t["remove_member"], key=f"m{i}_rm", type="secondary"):
-                to_remove_member = i
-
-    if to_remove_member is not None:
-        members.pop(to_remove_member)
-        st.rerun()
-
     if st.button(t["add_member"]):
-        members.append({
-            "first_name": "",
-            "last_name": "",
-            "street": "",
-            "zip": "",
-            "city": "",
-            "canton": "BE",
-            "is_host": False,
-            "meters": [],
-        })
+        members.append(
+            {
+                "first_name": "",
+                "last_name": "",
+                "street": "",
+                "zip": "",
+                "city": "",
+                "canton": "BE",
+                "is_host": False,
+                "meters": [
+                    {
+                        "external_id": "",
+                        "name": t["meter_consumption_physical"],
+                        "is_production": False,
+                        "is_virtual": False,
+                    }
+                ],
+            }
+        )
+        # Track the new member index so the expander opens automatically
+        st.session_state["_new_member_idx"] = len(members) - 1
         st.rerun()
 
 
@@ -281,16 +537,20 @@ def _actions_section() -> None:
     t = _gui_lang()
     st.divider()
 
-    col1, col2 = st.columns(2)
+    # Center the buttons using columns with spacers
+    spacer1, col1, col2, spacer2 = st.columns([1, 2, 2, 1])
 
     # ---- Save config ----
-    if col1.button(t["save_config"], type="primary"):
+    if col1.button(t["save_config"], type="primary", use_container_width=True):
+        s = st.session_state["settings"]
+        for key in ("csv_directory", "output_directory", "database_path"):
+            if not s.get(key, "").strip():
+                st.warning(f"{key} is empty — the pipeline will fail without it.")
+
         coll = dict(st.session_state["collective"])
-        coll["period_start"] = str(coll["period_start"])
-        coll["period_end"] = str(coll["period_end"])
 
         toml_str = _serialize_toml(
-            st.session_state["settings"],
+            s,
             coll,
             st.session_state["members"],
         )
@@ -298,17 +558,20 @@ def _actions_section() -> None:
         st.success(t["saved_to"].format(path=_CONFIG_PATH))
 
     # ---- Run pipeline ----
-    if col2.button(t["run_pipeline"]):
+    if col2.button(t["run_pipeline"], use_container_width=True):
         if not _CONFIG_PATH.exists():
             st.error(t["config_not_found"])
             return
 
         log_buffer = io.StringIO()
-        sink_id = logger.add(log_buffer, format="{time:HH:mm:ss} | {level: <8} | {message}", level="INFO")
+        sink_id = logger.add(
+            log_buffer, format="{time:HH:mm:ss} | {level: <8} | {message}", level="INFO"
+        )
 
         with st.spinner(t["running_pipeline"]):
             try:
                 from main import main as run_main
+
                 run_main(str(_CONFIG_PATH))
                 st.success(t["pipeline_success"])
             except SystemExit:
@@ -374,30 +637,55 @@ def _show_output_files(out_dir: Path) -> None:
 
 
 def _language_selector() -> None:
-    """Render a compact language dropdown at the top-right."""
+    """Render a compact language dropdown in the sidebar."""
+    t = _gui_lang()
     current = st.session_state.get("app_language", "en")
     idx = _LANGUAGES.index(current) if current in _LANGUAGES else 0
 
-    # Right-align the dropdown using columns
-    _, lang_col = st.columns([6, 1])
-    chosen_code = lang_col.selectbox(
-        " ",
+    # Language selector in sidebar
+    chosen_code = st.sidebar.selectbox(
+        t["language"],
         _LANGUAGES,
         index=idx,
         key="lang_selector",
-        label_visibility="collapsed",
     )
 
     # Sync into session state and collective config
     st.session_state["app_language"] = chosen_code
     st.session_state["collective"]["language"] = chosen_code
 
-    t = _gui_lang()
+    # Title in main area
     st.title(t["page_title"])
 
 
 def main() -> None:
-    st.set_page_config(page_title="BKW vZEV Calculator", page_icon="", layout="wide")
+    st.set_page_config(
+        page_title="BKW vZEV Calculator",
+        page_icon="",
+        layout="wide",
+        initial_sidebar_state="expanded",  # Force sidebar to be open by default
+    )
+
+    # Hide deploy button and add custom styling for vertical alignment
+    st.markdown(
+        """
+        <style>
+        /* Hide deploy button only */
+        .stDeployButton {display: none;}
+        
+        /* Vertically center buttons in columns */
+        [data-testid="stHorizontalBlock"] {
+            align-items: center;
+        }
+        
+        /* Add some vertical spacing for checkboxes to align with inputs */
+        [data-testid="stCheckbox"] {
+            padding-top: 0.5rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
     _init_state()
     _language_selector()

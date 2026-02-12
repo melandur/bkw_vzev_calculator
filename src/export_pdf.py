@@ -56,10 +56,27 @@ def _generate_bill_pdf(
     language: str,
     out_dir: Path,
 ) -> Path:
-    period_label = f"{get_month_name(language, bill.month)} {bill.year}"
+    # Generate period label based on number of months
+    period_months = bill.period_months if bill.period_months else [(bill.year, bill.month)]
+
+    if len(period_months) == 1:
+        # Single month
+        period_label = f"{get_month_name(language, bill.month)} {bill.year}"
+        period_suffix = f"{bill.year}-{bill.month:02d}"
+    else:
+        # Multi-month period (e.g. quarterly)
+        first_year, first_month = period_months[0]
+        last_year, last_month = period_months[-1]
+        if first_year == last_year:
+            period_label = f"{get_month_name(language, first_month)} - {get_month_name(language, last_month)} {first_year}"
+            period_suffix = f"{first_year}-{first_month:02d}_to_{last_month:02d}"
+        else:
+            period_label = f"{get_month_name(language, first_month)} {first_year} - {get_month_name(language, last_month)} {last_year}"
+            period_suffix = f"{first_year}-{first_month:02d}_to_{last_year}-{last_month:02d}"
+
     file_prefix = t["file_prefix"]
     filename = (
-        f"{file_prefix}_{bill.year}-{bill.month:02d}"
+        f"{file_prefix}_{period_suffix}"
         f"_{bill.member.last_name}_{bill.member.first_name}.pdf"
     )
     filepath = out_dir / filename

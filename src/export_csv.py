@@ -10,6 +10,7 @@ from loguru import logger
 from src.models import MemberBill
 
 _FIELDNAMES = [
+    "period",
     "year",
     "month",
     "first_name",
@@ -33,6 +34,17 @@ _FIELDNAMES = [
     "total_revenue_chf",
     "net_chf",
 ]
+
+
+def _format_period(bill: MemberBill) -> str:
+    """Format the billing period as a string."""
+    period_months = bill.period_months if bill.period_months else [(bill.year, bill.month)]
+    if len(period_months) == 1:
+        return f"{bill.year}-{bill.month:02d}"
+    else:
+        first_year, first_month = period_months[0]
+        last_year, last_month = period_months[-1]
+        return f"{first_year}-{first_month:02d} to {last_year}-{last_month:02d}"
 
 
 def export_csv_bills(
@@ -65,6 +77,7 @@ def export_csv_bills(
             net = bill.total_revenue - bill.total_cost
             writer.writerow(
                 {
+                    "period": _format_period(bill),
                     "year": bill.year,
                     "month": bill.month,
                     "first_name": bill.member.first_name,

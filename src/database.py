@@ -19,10 +19,19 @@ from src.models import (
 )
 
 # ---------------------------------------------------------------------------
-# Schema
+# Schema Version & Migrations
 # ---------------------------------------------------------------------------
 
-_SCHEMA_SQL = """
+# Current schema version - increment this when adding new migrations
+SCHEMA_VERSION = 1
+
+# Base schema (version 1) - the initial database structure
+_SCHEMA_V1 = """
+CREATE TABLE IF NOT EXISTS schema_version (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS members (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     first_name      TEXT NOT NULL,
@@ -96,6 +105,85 @@ CREATE TABLE IF NOT EXISTS complete_months (
 );
 """
 
+# Migration registry: version -> (description, SQL)
+# Add new migrations here when schema changes are needed.
+# Example for future migration:
+# 2: ("Add email column to members", "ALTER TABLE members ADD COLUMN email TEXT DEFAULT '';"),
+_MIGRATIONS: dict[int, tuple[str, str]] = {
+    1: ("Initial schema", _SCHEMA_V1),
+    # Future migrations go here:
+    # 2: ("Add index on meter_energy timestamp", "CREATE INDEX IF NOT EXISTS idx_meter_energy_ts ON meter_energy(timestamp);"),
+}
+
+
+def _get_current_version(conn: sqlite3.Connection) -> int:
+    """Get the current schema version from the database.
+
+    Returns 0 if the schema_version table doesn't exist (fresh database).
+    Returns -1 if tables exist but no schema_version (legacy database).
+    """
+    # Check if schema_version table exists
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'"
+    ).fetchone()
+
+    if row is None:
+        # Check if any other tables exist (legacy database without versioning)
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='members'"
+        ).fetchone()
+        if tables:
+            return -1  # Legacy database, needs version table added
+        return 0  # Fresh database
+
+    # Get the highest version number
+    row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    return row[0] if row[0] is not None else 0
+
+
+def _apply_migration(conn: sqlite3.Connection, version: int, description: str, sql: str) -> None:
+    """Apply a single migration and record it in schema_version."""
+    logger.info("Applying migration v{}: {}", version, description)
+    conn.executescript(sql)
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (?, datetime('now'))",
+        (version,),
+    )
+    conn.commit()
+
+
+def _migrate_database(conn: sqlite3.Connection) -> None:
+    """Run all pending migrations to bring database to current version."""
+    current = _get_current_version(conn)
+
+    # Handle legacy database (has tables but no schema_version)
+    if current == -1:
+        logger.info("Legacy database detected, adding schema versioning")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version     INTEGER PRIMARY KEY,
+                applied_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute(
+            "INSERT INTO schema_version (version, applied_at) VALUES (1, datetime('now'))"
+        )
+        conn.commit()
+        current = 1
+        logger.info("Database marked as version 1")
+
+    # Apply pending migrations
+    for version in range(current + 1, SCHEMA_VERSION + 1):
+        if version not in _MIGRATIONS:
+            raise RuntimeError(f"Missing migration for version {version}")
+        description, sql = _MIGRATIONS[version]
+        _apply_migration(conn, version, description, sql)
+
+    if current == SCHEMA_VERSION:
+        logger.debug("Database schema is up to date (v{})", SCHEMA_VERSION)
+    elif current < SCHEMA_VERSION:
+        logger.info("Database migrated from v{} to v{}", current, SCHEMA_VERSION)
+
 
 # ---------------------------------------------------------------------------
 # Connection helper
@@ -112,14 +200,18 @@ def get_connection(db_path: str | Path) -> sqlite3.Connection:
 
 
 def init_database(db_path: str | Path) -> sqlite3.Connection:
-    """Create the database file (if needed) and ensure all tables exist."""
+    """Create the database file (if needed) and run any pending migrations."""
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(path)
-    conn.executescript(_SCHEMA_SQL)
-    conn.commit()
-    logger.info("Database initialised at {}", path)
+    _migrate_database(conn)
+    logger.info("Database initialised at {} (schema v{})", path, SCHEMA_VERSION)
     return conn
+
+
+def get_schema_version(conn: sqlite3.Connection) -> int:
+    """Return the current schema version of the database."""
+    return _get_current_version(conn)
 
 
 # ---------------------------------------------------------------------------
@@ -180,8 +272,14 @@ def sync_config_to_db(conn: sqlite3.Connection, config: AppConfig) -> None:
     cur.execute("DELETE FROM agreement_producer_rates")
     cur.execute("DELETE FROM agreements")
 
-    period_start = str(config.collective.period_start)
-    period_end = str(config.collective.period_end)
+    # Convert billing_start/billing_end (YYYY-MM) to full date range for agreements
+    period_start = f"{config.collective.billing_start}-01"
+    # For period_end, use the last day of the end month (use first of next month for simplicity)
+    end_year, end_month = map(int, config.collective.billing_end.split("-"))
+    if end_month == 12:
+        period_end = f"{end_year + 1}-01-01"
+    else:
+        period_end = f"{end_year}-{end_month + 1:02d}-01"
 
     # Host-info agreement from collective-level rates
     cur.execute(

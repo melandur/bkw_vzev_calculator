@@ -1,7 +1,7 @@
 """Cost calculation using collective rates and invoice_daily data.
 
 Applies collective local, BKW buy, and BKW sell rates to produce a
-:class:`MemberBill` per member per month.
+:class:`MemberBill` per member per billing period.
 """
 
 from __future__ import annotations
@@ -23,59 +23,83 @@ from src.models import DailyDetail, MemberBill
 
 def calculate_bills(
     conn: sqlite3.Connection,
-    months: list[tuple[int, int]] | None = None,
+    month_groups: list[list[tuple[int, int]]] | None = None,
     show_daily_detail: bool = False,
 ) -> list[MemberBill]:
-    """Calculate bills for the given months (or all months with data).
+    """Calculate bills for the given month groups (billing periods).
 
     Parameters
     ----------
     conn : sqlite3.Connection
-    months : list of (year, month) tuples, optional
-        If *None*, bills every month that has invoice_daily data.
+    month_groups : list of lists of (year, month) tuples
+        Each inner list represents a billing period (e.g. a quarter).
+        If *None*, bills every month that has invoice_daily data (monthly).
     show_daily_detail : bool
         If True, populate ``daily_details`` on each bill.
 
     Returns a flat list of :class:`MemberBill` objects.
     """
-    if months is None:
+    if month_groups is None:
+        # Default to monthly billing for all available months
         months = get_distinct_energy_months(conn)
-    if not months:
+        month_groups = [[m] for m in months]
+
+    if not month_groups:
         logger.info("No energy data — nothing to bill")
         return []
 
     bills: list[MemberBill] = []
-    for year, month in months:
-        bills.extend(calculate_bills_for_month(conn, year, month, show_daily_detail))
+    for period_months in month_groups:
+        bills.extend(calculate_bills_for_period(conn, period_months, show_daily_detail))
     return bills
 
 
-def calculate_bills_for_month(
+def calculate_bills_for_period(
     conn: sqlite3.Connection,
-    year: int,
-    month: int,
+    period_months: list[tuple[int, int]],
     show_daily_detail: bool = False,
 ) -> list[MemberBill]:
-    """Calculate bills for a single month. Returns one bill per member."""
-    logger.info("Calculating bills for {}-{:02d}", year, month)
+    """Calculate bills for a billing period (one or more months).
+
+    Returns one bill per member for the entire period.
+    """
+    if not period_months:
+        return []
+
+    # Use the first month for the bill's year/month (for backwards compatibility)
+    first_year, first_month = period_months[0]
+    last_year, last_month = period_months[-1]
+
+    if len(period_months) == 1:
+        logger.info("Calculating bills for {}-{:02d}", first_year, first_month)
+    else:
+        logger.info(
+            "Calculating bills for {}-{:02d} to {}-{:02d} ({} months)",
+            first_year, first_month, last_year, last_month, len(period_months)
+        )
 
     members = get_all_members(conn)
     agreements = get_all_agreements(conn)
-    daily_records = get_invoice_daily_for_month(conn, year, month)
 
-    if not daily_records:
-        logger.info("  No invoice_daily data for {}-{:02d}", year, month)
+    # Collect all daily records across all months in the period
+    all_daily_records = []
+    for year, month in period_months:
+        records = get_invoice_daily_for_month(conn, year, month)
+        all_daily_records.extend(records)
+
+    if not all_daily_records:
+        logger.info("  No invoice_daily data for this period")
         return []
 
     # Build lookups
     member_by_id = {m.id: m for m in members}
 
-    # Find the host_info agreement for BKW rates
-    period_start = date(year, month, 1)
-    if month == 12:
-        period_end = date(year + 1, 1, 1)
+    # Find the host_info agreement for BKW rates (use first month of period)
+    period_start = date(first_year, first_month, 1)
+    if last_month == 12:
+        period_end = date(last_year + 1, 1, 1)
     else:
-        period_end = date(year, month + 1, 1)
+        period_end = date(last_year, last_month + 1, 1)
 
     host_agreement = _find_host_info_agreement(agreements, period_start, period_end)
     collective_local_rate = host_agreement.rate if host_agreement and host_agreement.rate else 0.0
@@ -85,9 +109,9 @@ def calculate_bills_for_month(
     if not host_agreement:
         logger.warning("  No host_info agreement found — rates will be 0")
 
-    # Aggregate invoice_daily by member
+    # Aggregate invoice_daily by member across all months
     member_totals: dict[int, dict[str, float]] = {}
-    for rec in daily_records:
+    for rec in all_daily_records:
         mid = rec.member_id
         if mid not in member_totals:
             member_totals[mid] = {
@@ -145,43 +169,46 @@ def calculate_bills_for_month(
         # --- Daily detail (optional) -------------------------------------------
         daily_details: list[DailyDetail] = []
         if show_daily_detail:
-            daily_rows = get_daily_aggregates(conn, mid, year, month)
-            for dr in daily_rows:
-                d_local = dr["local_consumption"]
-                d_bkw = dr["bkw_consumption"]
-                d_phys_cons = dr["physical_consumption"]
-                d_phys_prod = dr["physical_production"]
-                d_virt_prod = dr["virtual_production"]
+            # Collect daily details from all months in the period
+            for year, month in period_months:
+                daily_rows = get_daily_aggregates(conn, mid, year, month)
+                for dr in daily_rows:
+                    d_local = dr["local_consumption"]
+                    d_bkw = dr["bkw_consumption"]
+                    d_phys_cons = dr["physical_consumption"]
+                    d_phys_prod = dr["physical_production"]
+                    d_virt_prod = dr["virtual_production"]
 
-                d_local_cost = d_local * local_rate
-                d_bkw_cost = d_bkw * bkw_rate
+                    d_local_cost = d_local * local_rate
+                    d_bkw_cost = d_bkw * bkw_rate
 
-                # Production breakdown for host
-                d_local_sell = max(0.0, d_phys_prod - d_virt_prod) if is_producer else 0.0
-                d_bkw_export = d_virt_prod if is_producer else 0.0
-                d_bkw_export_rev = d_bkw_export * bkw_sell_rate if is_producer else 0.0
-                d_local_sell_rev = d_local_sell * collective_local_rate if is_producer else 0.0
+                    # Production breakdown for host
+                    d_local_sell = max(0.0, d_phys_prod - d_virt_prod) if is_producer else 0.0
+                    d_bkw_export = d_virt_prod if is_producer else 0.0
+                    d_bkw_export_rev = d_bkw_export * bkw_sell_rate if is_producer else 0.0
+                    d_local_sell_rev = d_local_sell * collective_local_rate if is_producer else 0.0
 
-                daily_details.append(DailyDetail(
-                    day=dr["day"],
-                    local_consumption_kwh=round(d_local),
-                    bkw_consumption_kwh=round(d_bkw),
-                    total_consumption_kwh=round(d_phys_cons),
-                    local_cost=round(d_local_cost, 2),
-                    bkw_cost=round(d_bkw_cost, 2),
-                    total_cost=round(d_local_cost + d_bkw_cost, 2),
-                    total_production_kwh=round(d_phys_prod),
-                    local_sell_kwh=round(d_local_sell),
-                    bkw_export_kwh=round(d_bkw_export),
-                    local_sell_revenue=round(d_local_sell_rev, 2),
-                    bkw_export_revenue=round(d_bkw_export_rev, 2),
-                    total_revenue=round(d_local_sell_rev + d_bkw_export_rev, 2),
-                ))
+                    daily_details.append(DailyDetail(
+                        day=dr["day"],
+                        local_consumption_kwh=round(d_local),
+                        bkw_consumption_kwh=round(d_bkw),
+                        total_consumption_kwh=round(d_phys_cons),
+                        local_cost=round(d_local_cost, 2),
+                        bkw_cost=round(d_bkw_cost, 2),
+                        total_cost=round(d_local_cost + d_bkw_cost, 2),
+                        total_production_kwh=round(d_phys_prod),
+                        local_sell_kwh=round(d_local_sell),
+                        bkw_export_kwh=round(d_bkw_export),
+                        local_sell_revenue=round(d_local_sell_rev, 2),
+                        bkw_export_revenue=round(d_bkw_export_rev, 2),
+                        total_revenue=round(d_local_sell_rev + d_bkw_export_rev, 2),
+                    ))
 
         bill = MemberBill(
             member=member,
-            year=year,
-            month=month,
+            year=first_year,
+            month=first_month,
+            period_months=list(period_months),
             total_consumption_kwh=round(physical_consumption),
             local_consumption_kwh=round(local_consumption),
             bkw_consumption_kwh=round(bkw_consumption_kwh),

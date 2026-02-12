@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -26,9 +26,11 @@ class CollectiveConfig(BaseModel):
     name: str
     language: str = "en"
     show_daily_detail: bool = False
-    bill_months: list[str] = Field(default_factory=list)
-    period_start: date
-    period_end: date
+    # Billing period: YYYY-MM format for start/end months
+    billing_start: str  # e.g. "2025-01"
+    billing_end: str  # e.g. "2025-12"
+    # Billing interval: how to group months into bills
+    billing_interval: str = "monthly"  # monthly | quarterly | semi_annual | annual
     local_rate: float = 0.0
     bkw_buy_rate: float = 0.0
     bkw_sell_rate: float = 0.0
@@ -177,6 +179,8 @@ class MemberBill(BaseModel):
     member: Member
     year: int
     month: int
+    # For multi-month periods (quarterly, semi_annual, annual)
+    period_months: list[tuple[int, int]] = []  # list of (year, month) tuples in this period
     # Consumption totals (kWh)
     total_consumption_kwh: float = 0.0
     local_consumption_kwh: float = 0.0

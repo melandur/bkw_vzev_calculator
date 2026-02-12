@@ -24,6 +24,61 @@ from src.export_pdf import export_pdf_bills
 from src.quality import get_billable_months, run_quality_checks
 
 
+def _group_months_by_interval(
+    months: list[tuple[int, int]], interval: str
+) -> list[list[tuple[int, int]]]:
+    """Group months into billing periods based on interval.
+
+    Args:
+        months: List of (year, month) tuples, sorted chronologically
+        interval: One of 'monthly', 'quarterly', 'semi_annual', 'annual'
+
+    Returns:
+        List of month groups, each group is a list of (year, month) tuples
+    """
+    if not months:
+        return []
+
+    if interval == "monthly":
+        return [[m] for m in months]
+
+    # Define period boundaries
+    if interval == "quarterly":
+        # Q1: 1-3, Q2: 4-6, Q3: 7-9, Q4: 10-12
+        def period_key(ym: tuple[int, int]) -> tuple[int, int]:
+            return (ym[0], (ym[1] - 1) // 3)
+    elif interval == "semi_annual":
+        # H1: 1-6, H2: 7-12
+        def period_key(ym: tuple[int, int]) -> tuple[int, int]:
+            return (ym[0], 0 if ym[1] <= 6 else 1)
+    elif interval == "annual":
+        def period_key(ym: tuple[int, int]) -> tuple[int, int]:
+            return (ym[0], 0)
+    else:
+        logger.warning("Unknown billing_interval '{}' — defaulting to monthly", interval)
+        return [[m] for m in months]
+
+    # Group by period
+    groups: list[list[tuple[int, int]]] = []
+    current_group: list[tuple[int, int]] = []
+    current_key: tuple[int, int] | None = None
+
+    for ym in months:
+        key = period_key(ym)
+        if key != current_key:
+            if current_group:
+                groups.append(current_group)
+            current_group = [ym]
+            current_key = key
+        else:
+            current_group.append(ym)
+
+    if current_group:
+        groups.append(current_group)
+
+    return groups
+
+
 def main(config_path: str = "config.toml") -> None:
     _configure_logging()
     t0 = time.perf_counter()
@@ -35,68 +90,80 @@ def main(config_path: str = "config.toml") -> None:
     # 2. Initialise database
     conn = init_database(config.settings.database_path)
 
-    # 3. Sync config (members, meters, agreements) into the database
-    sync_config_to_db(conn, config)
+    try:
+        # 3. Sync config (members, meters, agreements) into the database
+        sync_config_to_db(conn, config)
 
-    # 4. Import CSV energy data
-    imported = import_csv_directory(conn, config.settings.csv_directory)
-    logger.info("CSV import: {} total records", imported)
+        # 4. Import CSV energy data
+        imported = import_csv_directory(conn, config.settings.csv_directory)
+        logger.info("CSV import: {} total records", imported)
 
-    # 5. Quality checks
-    issues = run_quality_checks(conn)
-    if issues:
-        logger.warning("{} quality issue(s) found — see above for details", len(issues))
+        # 5. Quality checks
+        issues = run_quality_checks(conn)
+        if issues:
+            logger.warning("{} quality issue(s) found — see above for details", len(issues))
 
-    # 6. Determine billable months (complete + gap-free)
-    billable = get_billable_months(conn)
+        # 6. Determine billable months (complete + gap-free)
+        billable = get_billable_months(conn)
 
-    # 6b. Optionally restrict to user-specified months
-    if config.collective.bill_months:
-        requested = set()
-        for spec in config.collective.bill_months:
-            try:
-                y, m = spec.split("-")
-                requested.add((int(y), int(m)))
-            except ValueError:
-                logger.warning("Ignoring invalid bill_months entry: '{}'", spec)
-        billable = [ym for ym in billable if ym in requested]
+        # 6b. Filter to configured billing_start / billing_end range
+        try:
+            start_year, start_month = map(int, config.collective.billing_start.split("-"))
+            end_year, end_month = map(int, config.collective.billing_end.split("-"))
+            billable = [
+                (y, m) for y, m in billable
+                if (y, m) >= (start_year, start_month) and (y, m) <= (end_year, end_month)
+            ]
+        except ValueError:
+            logger.warning("Invalid billing_start or billing_end format — using all billable months")
+
         if not billable:
-            logger.warning("None of the requested bill_months are billable")
+            logger.warning("No billable months in the specified range")
 
-    # 7. Solar allocation (only billable months)
-    allocated = run_allocation(conn, months=billable)
-    logger.info("Allocation: {} invoice_daily records", allocated)
+        # 7. Solar allocation (only billable months)
+        allocated = run_allocation(conn, months=billable)
+        logger.info("Allocation: {} invoice_daily records", allocated)
 
-    # 8. Calculate bills (only billable months)
-    bills = calculate_bills(
-        conn,
-        months=billable,
-        show_daily_detail=config.collective.show_daily_detail,
-    )
-    logger.info("Billing: {} bill(s) calculated", len(bills))
-
-    # 9. Clean output directory and export
-    out_dir = Path(config.settings.output_directory)
-    if out_dir.exists():
-        for old in out_dir.glob("*.pdf"):
-            old.unlink()
-        for old in out_dir.glob("bills_*.csv"):
-            old.unlink()
-
-    if bills:
-        pdf_paths = export_pdf_bills(
-            bills,
-            collective_name=config.collective.name,
-            show_daily_detail=config.collective.show_daily_detail,
-            language=config.collective.language,
-            output_dir=config.settings.output_directory,
+        # 8. Group months by billing interval and calculate bills
+        billing_interval = config.collective.billing_interval
+        month_groups = _group_months_by_interval(billable, billing_interval)
+        logger.info(
+            "Billing interval: {} — {} period(s) to bill",
+            billing_interval,
+            len(month_groups),
         )
-        csv_path = export_csv_bills(bills, output_dir=config.settings.output_directory)
-        logger.info("Export: {} PDF(s), CSV at {}", len(pdf_paths), csv_path)
-    else:
-        logger.info("No bills to export")
 
-    conn.close()
+        bills = calculate_bills(
+            conn,
+            month_groups=month_groups,
+            show_daily_detail=config.collective.show_daily_detail,
+        )
+        logger.info("Billing: {} bill(s) calculated", len(bills))
+
+        # 9. Clean output directory and export
+        out_dir = Path(config.settings.output_directory)
+        if out_dir.exists():
+            for old in out_dir.glob("*.pdf"):
+                old.unlink()
+            for old in out_dir.glob("bills_*.csv"):
+                old.unlink()
+
+        if bills:
+            pdf_paths = export_pdf_bills(
+                bills,
+                collective_name=config.collective.name,
+                show_daily_detail=config.collective.show_daily_detail,
+                language=config.collective.language,
+                output_dir=config.settings.output_directory,
+            )
+            csv_path = export_csv_bills(bills, output_dir=config.settings.output_directory)
+            logger.info("Export: {} PDF(s), CSV at {}", len(pdf_paths), csv_path)
+        else:
+            logger.info("No bills to export")
+
+    finally:
+        conn.close()
+
     elapsed = time.perf_counter() - t0
     logger.info("=== Done in {:.2f}s ===", elapsed)
 
