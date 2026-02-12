@@ -18,13 +18,15 @@ from src.database import (
     get_distinct_energy_months,
     get_invoice_daily_for_month,
 )
-from src.models import DailyDetail, MemberBill
+from src.models import CalculatedFee, DailyDetail, MemberBill, MemberConfig
 
 
 def calculate_bills(
     conn: sqlite3.Connection,
     month_groups: list[list[tuple[int, int]]] | None = None,
     show_daily_detail: bool = False,
+    member_configs: list[MemberConfig] | None = None,
+    vat_rate: float = 0.0,
 ) -> list[MemberBill]:
     """Calculate bills for the given month groups (billing periods).
 
@@ -36,6 +38,11 @@ def calculate_bills(
         If *None*, bills every month that has invoice_daily data (monthly).
     show_daily_detail : bool
         If True, populate ``daily_details`` on each bill.
+    member_configs : list of MemberConfig, optional
+        Member configurations containing custom_fees. If provided, fees
+        are calculated and added to the bills.
+    vat_rate : float
+        VAT percentage to apply to positive net amounts.
 
     Returns a flat list of :class:`MemberBill` objects.
     """
@@ -50,7 +57,7 @@ def calculate_bills(
 
     bills: list[MemberBill] = []
     for period_months in month_groups:
-        bills.extend(calculate_bills_for_period(conn, period_months, show_daily_detail))
+        bills.extend(calculate_bills_for_period(conn, period_months, show_daily_detail, member_configs, vat_rate))
     return bills
 
 
@@ -58,6 +65,8 @@ def calculate_bills_for_period(
     conn: sqlite3.Connection,
     period_months: list[tuple[int, int]],
     show_daily_detail: bool = False,
+    member_configs: list[MemberConfig] | None = None,
+    vat_rate: float = 0.0,
 ) -> list[MemberBill]:
     """Calculate bills for a billing period (one or more months).
 
@@ -235,6 +244,46 @@ def calculate_bills_for_period(
                         total_revenue=round(d_local_sell_rev + d_bkw_export_rev, 2),
                     ))
 
+        # Calculate custom fees if member config is available
+        calculated_fees: list[CalculatedFee] = []
+        total_fees = 0.0
+        if member_configs:
+            # Find matching member config by name
+            member_cfg = _find_member_config(member_configs, member.first_name, member.last_name)
+            if member_cfg and member_cfg.custom_fees:
+                num_months = len(period_months)
+                running_total = total_cost  # Start with energy cost
+
+                for fee in member_cfg.custom_fees:
+                    if fee.fee_type == "yearly":
+                        # Yearly fee split by billing months
+                        fee_amount = (fee.value / 12) * num_months
+                    else:  # percent
+                        # Percentage applied to running total
+                        fee_amount = (fee.value / 100) * running_total
+
+                    fee_amount = round(fee_amount, 2)
+                    running_total += fee_amount
+                    total_fees += fee_amount
+
+                    calculated_fees.append(CalculatedFee(
+                        name=fee.name,
+                        value=fee.value,
+                        fee_type=fee.fee_type,
+                        amount=fee_amount,
+                    ))
+
+        # Calculate net before VAT
+        net_before_vat = total_cost + total_fees - total_revenue
+
+        # Apply VAT only if net is positive and vat_rate > 0
+        vat_amount = 0.0
+        if vat_rate > 0 and net_before_vat > 0:
+            vat_amount = round((vat_rate / 100) * net_before_vat, 2)
+
+        # Grand total = cost + fees + VAT - revenue (for host)
+        grand_total = round(net_before_vat + vat_amount, 2)
+
         bill = MemberBill(
             member=member,
             year=first_year,
@@ -257,15 +306,22 @@ def calculate_bills_for_period(
             bkw_rate=bkw_rate if bkw_rate else None,
             bkw_sell_rate=bkw_sell_rate if bkw_sell_rate else None,
             daily_details=daily_details,
+            calculated_fees=calculated_fees,
+            total_fees=round(total_fees, 2),
+            vat_rate=vat_rate if vat_amount > 0 else 0.0,
+            vat_amount=vat_amount,
+            grand_total=grand_total,
         )
         bills.append(bill)
 
+        fees_str = f", fees: {total_fees:.2f}" if total_fees else ""
         logger.info(
-            "  {} — cost: {:.2f} CHF (local: {:.2f} + grid: {:.2f}), revenue: {:.2f} CHF",
+            "  {} — cost: {:.2f} CHF (local: {:.2f} + grid: {:.2f}){}, revenue: {:.2f} CHF",
             member.full_name,
             total_cost,
             local_cost,
             bkw_cost,
+            fees_str,
             total_revenue,
         )
 
@@ -275,6 +331,18 @@ def calculate_bills_for_period(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _find_member_config(
+    member_configs: list[MemberConfig],
+    first_name: str,
+    last_name: str,
+) -> MemberConfig | None:
+    """Find a member config by first and last name."""
+    for cfg in member_configs:
+        if cfg.first_name == first_name and cfg.last_name == last_name:
+            return cfg
+    return None
 
 
 def _find_host_info_agreement(agreements, period_start: date, period_end: date):

@@ -5,6 +5,7 @@ Run with:  streamlit run app.py
 
 from __future__ import annotations
 
+import copy
 import io
 import tomllib
 from datetime import date, datetime
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import streamlit as st
 from loguru import logger
+from streamlit_sortables import sort_items
 
 from src.database import get_connection, get_month_availability
 from src.translations import get_gui_translations, get_month_name
@@ -68,12 +70,14 @@ def _load_config_dict() -> dict:
             "name": "My vZEV",
             "language": "en",
             "show_daily_detail": False,
+            "show_icons": False,
             "billing_start": "2025-01",
             "billing_end": "2025-12",
             "billing_interval": "monthly",
             "local_rate": 0.16,
             "bkw_buy_rate": 0.2816,
             "bkw_sell_rate": 0.1311,
+            "vat_rate": 0.0,
         },
         "members": [],
     }
@@ -116,12 +120,16 @@ def _serialize_toml(settings: dict, collective: dict, members: list[dict]) -> st
     lines.append(
         f"show_daily_detail = {'true' if collective['show_daily_detail'] else 'false'}"
     )
+    lines.append(
+        f"show_icons = {'true' if collective.get('show_icons') else 'false'}"
+    )
     lines.append(f"billing_start = {_q(collective['billing_start'])}")
     lines.append(f"billing_end = {_q(collective['billing_end'])}")
     lines.append(f"billing_interval = {_q(collective['billing_interval'])}")
     lines.append(f"local_rate = {collective['local_rate']}")
     lines.append(f"bkw_buy_rate = {collective['bkw_buy_rate']}")
     lines.append(f"bkw_sell_rate = {collective['bkw_sell_rate']}")
+    lines.append(f"vat_rate = {collective['vat_rate']}")
     lines.append("")
 
     # [[members]]
@@ -155,6 +163,15 @@ def _serialize_toml(settings: dict, collective: dict, members: list[dict]) -> st
             )
             lines.append("")
 
+        # Custom fees (order matters!)
+        for fee in member.get("custom_fees", []):
+            if fee.get("name"):  # Only serialize fees with a name
+                lines.append("[[members.custom_fees]]")
+                lines.append(f"name = {_q(fee['name'])}")
+                lines.append(f"value = {fee.get('value', 0.0)}")
+                lines.append(f"fee_type = {_q(fee.get('fee_type', 'percent'))}")
+                lines.append("")
+
     return "\n".join(lines)
 
 
@@ -185,6 +202,8 @@ def _init_state() -> None:
         member = dict(m)
         member.setdefault("meters", [])
         member["meters"] = [dict(mt) for mt in member["meters"]]
+        member.setdefault("custom_fees", [])
+        member["custom_fees"] = [dict(f) for f in member["custom_fees"]]
         members.append(member)
     st.session_state["members"] = members
 
@@ -210,82 +229,237 @@ def _gui_lang() -> dict[str, str]:
 def _sidebar() -> None:
     """Render the sidebar with settings and collective config."""
     t = _gui_lang()
-
-    st.sidebar.header(t["settings"])
-    s = st.session_state["settings"]
-    s["csv_directory"] = st.sidebar.text_input(
-        t["csv_directory"], value=s.get("csv_directory", "./data")
-    )
-    s["output_directory"] = st.sidebar.text_input(
-        t["output_directory"], value=s.get("output_directory", "./output")
-    )
-    s["database_path"] = st.sidebar.text_input(
-        t["database_path"], value=s.get("database_path", "./vzev.db")
-    )
-
-    st.sidebar.divider()
-    st.sidebar.header(t["collective"])
     c = st.session_state["collective"]
-    c["name"] = st.sidebar.text_input(t["name"], value=c.get("name", ""))
-    c["show_daily_detail"] = st.sidebar.checkbox(
-        t["show_daily_detail"], value=c.get("show_daily_detail", False)
-    )
 
-    # Billing start: year and month dropdowns
-    st.sidebar.markdown(f"**{t['billing_start']}**")
-    start_year, start_month = _parse_billing_month(c.get("billing_start", "2025-01"))
-    start_year_idx = _YEARS.index(start_year) if start_year in _YEARS else 5
-    start_month_idx = _MONTHS.index(start_month) if start_month in _MONTHS else 0
-    col_sy, col_sm = st.sidebar.columns(2)
-    start_year_sel = col_sy.selectbox(
-        t["year"], _YEARS, index=start_year_idx, key="billing_start_year", label_visibility="collapsed"
-    )
-    start_month_sel = col_sm.selectbox(
-        t["month"], _MONTHS, index=start_month_idx, key="billing_start_month", label_visibility="collapsed"
-    )
-    c["billing_start"] = f"{start_year_sel}-{start_month_sel}"
+    # Settings section (collapsible)
+    with st.sidebar.expander(t["settings"], expanded=False):
+        s = st.session_state["settings"]
+        s["csv_directory"] = st.text_input(
+            t["csv_directory"], value=s.get("csv_directory", "./data")
+        )
+        s["output_directory"] = st.text_input(
+            t["output_directory"], value=s.get("output_directory", "./output")
+        )
+        s["database_path"] = st.text_input(
+            t["database_path"], value=s.get("database_path", "./vzev.db")
+        )
 
-    # Billing end: year and month dropdowns
-    st.sidebar.markdown(f"**{t['billing_end']}**")
-    end_year, end_month = _parse_billing_month(c.get("billing_end", "2025-12"))
-    end_year_idx = _YEARS.index(end_year) if end_year in _YEARS else 5
-    end_month_idx = _MONTHS.index(end_month) if end_month in _MONTHS else 11
-    col_ey, col_em = st.sidebar.columns(2)
-    end_year_sel = col_ey.selectbox(
-        t["year"], _YEARS, index=end_year_idx, key="billing_end_year", label_visibility="collapsed"
-    )
-    end_month_sel = col_em.selectbox(
-        t["month"], _MONTHS, index=end_month_idx, key="billing_end_month", label_visibility="collapsed"
-    )
-    c["billing_end"] = f"{end_year_sel}-{end_month_sel}"
+    # Collective section (collapsible) - just the name
+    with st.sidebar.expander(t["collective"], expanded=False):
+        c["name"] = st.text_input(t["name"], value=c.get("name", ""))
 
-    interval_val = c.get("billing_interval", "monthly")
-    interval_idx = _BILLING_INTERVAL_KEYS.index(interval_val) if interval_val in _BILLING_INTERVAL_KEYS else 0
-    # Create translated labels for billing intervals
-    interval_labels = [t.get(f"interval_{key}", key) for key in _BILLING_INTERVAL_KEYS]
-    selected_label = st.sidebar.selectbox(
-        t["billing_interval"], interval_labels, index=interval_idx
-    )
-    # Map back to the internal key
-    c["billing_interval"] = _BILLING_INTERVAL_KEYS[interval_labels.index(selected_label)]
+    # Rates section (collapsible)
+    with st.sidebar.expander(t["rates"], expanded=False):
+        c["local_rate"] = st.number_input(
+            t["local_rate"], value=float(c.get("local_rate", 0.0)), format="%.6f", step=0.01, min_value=0.0
+        )
+        c["bkw_buy_rate"] = st.number_input(
+            t["bkw_buy_rate"],
+            value=float(c.get("bkw_buy_rate", 0.0)),
+            format="%.6f",
+            step=0.01,
+            min_value=0.0,
+        )
+        c["bkw_sell_rate"] = st.number_input(
+            t["bkw_sell_rate"],
+            value=float(c.get("bkw_sell_rate", 0.0)),
+            format="%.6f",
+            step=0.01,
+            min_value=0.0,
+        )
+        c["vat_rate"] = st.number_input(
+            t["vat_rate"],
+            value=float(c.get("vat_rate", 0.0)),
+            format="%.2f",
+            step=0.1,
+            min_value=0.0,
+            help=t.get("vat_rate_help", ""),
+        )
 
-    st.sidebar.divider()
-    st.sidebar.header(t["rates"])
-    c["local_rate"] = st.sidebar.number_input(
-        t["local_rate"], value=float(c.get("local_rate", 0.0)), format="%.4f", step=0.01
-    )
-    c["bkw_buy_rate"] = st.sidebar.number_input(
-        t["bkw_buy_rate"],
-        value=float(c.get("bkw_buy_rate", 0.0)),
-        format="%.4f",
-        step=0.01,
-    )
-    c["bkw_sell_rate"] = st.sidebar.number_input(
-        t["bkw_sell_rate"],
-        value=float(c.get("bkw_sell_rate", 0.0)),
-        format="%.4f",
-        step=0.01,
-    )
+        # Custom fees button
+        st.divider()
+        if st.button(t["custom_fees"], use_container_width=True):
+            st.session_state["_show_custom_fees_dialog"] = True
+            st.rerun()
+
+    # Custom fees dialog (outside expander to render properly)
+    if st.session_state.get("_show_custom_fees_dialog"):
+        _render_custom_fees_dialog()
+        # Reset the flag so dialog doesn't reopen on next rerun (e.g., when clicking Create Bill)
+        st.session_state["_show_custom_fees_dialog"] = False
+
+    # Bill section (collapsible) - billing period, interval, daily detail
+    with st.sidebar.expander(t["bill"], expanded=False):
+        # Billing start: year and month dropdowns
+        st.markdown(f"**{t['billing_start']}**")
+        start_year, start_month = _parse_billing_month(c.get("billing_start", "2025-01"))
+        start_year_idx = _YEARS.index(start_year) if start_year in _YEARS else 5
+        start_month_idx = _MONTHS.index(start_month) if start_month in _MONTHS else 0
+        col_sy, col_sm = st.columns(2)
+        start_year_sel = col_sy.selectbox(
+            t["year"], _YEARS, index=start_year_idx, key="billing_start_year", label_visibility="collapsed"
+        )
+        start_month_sel = col_sm.selectbox(
+            t["month"], _MONTHS, index=start_month_idx, key="billing_start_month", label_visibility="collapsed"
+        )
+        c["billing_start"] = f"{start_year_sel}-{start_month_sel}"
+
+        # Billing end: year and month dropdowns
+        st.markdown(f"**{t['billing_end']}**")
+        end_year, end_month = _parse_billing_month(c.get("billing_end", "2025-12"))
+        end_year_idx = _YEARS.index(end_year) if end_year in _YEARS else 5
+        end_month_idx = _MONTHS.index(end_month) if end_month in _MONTHS else 11
+        col_ey, col_em = st.columns(2)
+        end_year_sel = col_ey.selectbox(
+            t["year"], _YEARS, index=end_year_idx, key="billing_end_year", label_visibility="collapsed"
+        )
+        end_month_sel = col_em.selectbox(
+            t["month"], _MONTHS, index=end_month_idx, key="billing_end_month", label_visibility="collapsed"
+        )
+        c["billing_end"] = f"{end_year_sel}-{end_month_sel}"
+
+        interval_val = c.get("billing_interval", "monthly")
+        interval_idx = _BILLING_INTERVAL_KEYS.index(interval_val) if interval_val in _BILLING_INTERVAL_KEYS else 0
+        # Create translated labels for billing intervals
+        interval_labels = [t.get(f"interval_{key}", key) for key in _BILLING_INTERVAL_KEYS]
+        selected_label = st.selectbox(
+            t["billing_interval"], interval_labels, index=interval_idx
+        )
+        # Map back to the internal key
+        c["billing_interval"] = _BILLING_INTERVAL_KEYS[interval_labels.index(selected_label)]
+
+        c["show_daily_detail"] = st.checkbox(
+            t["show_daily_detail"], value=c.get("show_daily_detail", False)
+        )
+        c["show_icons"] = st.checkbox(
+            t["show_icons"], value=c.get("show_icons", False)
+        )
+
+
+def _render_custom_fees_dialog() -> None:
+    """Render the custom fees dialog popup with drag-and-drop reordering."""
+    t = _gui_lang()
+    members = st.session_state["members"]
+
+    @st.dialog(t["custom_fees"], width="large")
+    def _custom_fees_dialog():
+        if not members:
+            st.info(t.get("no_fees_yet", "No members defined yet"))
+            return
+
+        # Member selector (outside fragment)
+        member_names = [f"{m.get('first_name', '')} {m.get('last_name', '')}".strip() or f"Member {i+1}"
+                        for i, m in enumerate(members)]
+        selected_idx = st.selectbox(
+            t["select_member"],
+            range(len(members)),
+            format_func=lambda i: member_names[i],
+            key="custom_fees_member_select"
+        )
+
+        st.divider()
+
+        # Fragment for fee editing - allows rerun without closing dialog
+        @st.fragment
+        def _fees_editor():
+            member = members[selected_idx]
+            if "custom_fees" not in member:
+                member["custom_fees"] = []
+
+            fees = member["custom_fees"]
+
+            # Process pending actions from previous fragment rerun
+            pending = st.session_state.pop("_fee_pending_action", None)
+            if pending:
+                action_type, idx = pending
+                if action_type == "add":
+                    fees.append({"name": "", "value": 0.0, "fee_type": "yearly"})
+                elif action_type == "remove" and idx < len(fees):
+                    fees.pop(idx)
+                elif action_type == "copy_to_all":
+                    # Copy current member's fees to all other members
+                    for i, other_member in enumerate(members):
+                        if i != selected_idx:
+                            other_member["custom_fees"] = copy.deepcopy(fees)
+
+            if fees:
+                # Build sortable items
+                def _fee_label(fee: dict, idx: int) -> str:
+                    name = fee.get("name") or f"Fee {idx + 1}"
+                    val = fee.get("value", 0.0)
+                    return f"{name} ({val:.2f} CHF/year)"
+
+                fee_labels = [_fee_label(f, i) for i, f in enumerate(fees)]
+
+                # Drag-and-drop sortable list
+                st.caption(t.get("drag_to_reorder", "Drag to reorder"))
+                sorted_labels = sort_items(fee_labels, key=f"fee_sort_{selected_idx}")
+
+                # If order changed, reorder the fees list
+                if sorted_labels != fee_labels:
+                    label_to_idx = {_fee_label(f, i): i for i, f in enumerate(fees)}
+                    new_order = [label_to_idx[label] for label in sorted_labels]
+                    member["custom_fees"] = [fees[i] for i in new_order]
+                    fees = member["custom_fees"]
+
+                st.divider()
+
+                # Editable fee details
+                for i, fee in enumerate(fees):
+                    col1, col2, col3, col4 = st.columns([4, 2, 2, 1])
+
+                    # Fee name
+                    new_name = col1.text_input(
+                        t["fee_name"],
+                        value=fee.get("name", ""),
+                        key=f"fee_name_{selected_idx}_{i}",
+                        label_visibility="collapsed",
+                        placeholder=t["fee_name"]
+                    )
+                    fee["name"] = new_name
+
+                    # Fee value (yearly CHF)
+                    new_value = col2.number_input(
+                        t["fee_value"],
+                        value=float(fee.get("value", 0.0)),
+                        format="%.2f",
+                        step=0.1,
+                        key=f"fee_value_{selected_idx}_{i}",
+                        label_visibility="collapsed"
+                    )
+                    fee["value"] = new_value
+
+                    # Label showing CHF/year
+                    col3.markdown(f"<div style='margin-top: -8px;'>{t.get('fee_unit_yearly', 'CHF / year')}</div>", unsafe_allow_html=True)
+
+                    # Always set fee type to yearly
+                    fee["fee_type"] = "yearly"
+
+                    # Remove button
+                    if col4.button("✕", key=f"fee_remove_{selected_idx}_{i}", help=t["remove_fee"], use_container_width=True):
+                        st.session_state["_fee_pending_action"] = ("remove", i)
+                        st.rerun(scope="fragment")
+            else:
+                st.info(t["no_fees_yet"])
+
+            st.divider()
+
+            # Add new fee / Copy to all buttons
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                if st.button(t["add_fee"], use_container_width=True):
+                    st.session_state["_fee_pending_action"] = ("add", 0)
+                    st.rerun(scope="fragment")
+            with btn_col2:
+                # Only show copy button if there are fees and more than one member
+                if fees and len(members) > 1:
+                    if st.button(t["copy_to_all"], use_container_width=True):
+                        st.session_state["_fee_pending_action"] = ("copy_to_all", selected_idx)
+                        st.rerun(scope="fragment")
+
+        _fees_editor()
+
+    _custom_fees_dialog()
 
 
 def _sidebar_bottom() -> None:

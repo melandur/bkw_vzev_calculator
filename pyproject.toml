@@ -20,6 +20,7 @@ packages = ["src"]
 [project.optional-dependencies]
 gui = [
     "streamlit>=1.30",
+    "streamlit-sortables>=0.3",
 ]
 dev = [
     "ruff",

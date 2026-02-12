@@ -26,6 +26,7 @@ class CollectiveConfig(BaseModel):
     name: str
     language: str = "en"
     show_daily_detail: bool = False
+    show_icons: bool = False  # Show icons (☀/⚡) in front of energy source names in PDF
     # Billing period: YYYY-MM format for start/end months
     billing_start: str  # e.g. "2025-01"
     billing_end: str  # e.g. "2025-12"
@@ -34,6 +35,7 @@ class CollectiveConfig(BaseModel):
     local_rate: float = 0.0
     bkw_buy_rate: float = 0.0
     bkw_sell_rate: float = 0.0
+    vat_rate: float = 0.0  # VAT percentage, applied to positive net amounts
 
 
 class MeterConfig(BaseModel):
@@ -43,6 +45,31 @@ class MeterConfig(BaseModel):
     name: str
     is_production: bool = False
     is_virtual: bool = False
+
+
+class CustomFee(BaseModel):
+    """A custom fee entry for a member.
+
+    Fee types:
+    - percent: Applied as percentage to running total (e.g., VAT 7.7%)
+    - yearly: Fixed yearly amount split by billing months (e.g., admin fee CHF 120/year)
+
+    Order matters: fees are calculated sequentially, so percentage fees
+    at the end will apply to the sum of energy cost + previous fees.
+    """
+
+    name: str
+    value: float
+    fee_type: str = "percent"  # "percent" or "yearly"
+
+
+class CalculatedFee(BaseModel):
+    """A calculated fee with its computed amount for display on bills."""
+
+    name: str
+    value: float  # Original value (percentage or yearly amount)
+    fee_type: str
+    amount: float  # Calculated amount in CHF
 
 
 class MemberConfig(BaseModel):
@@ -56,6 +83,7 @@ class MemberConfig(BaseModel):
     canton: str = ""
     is_host: bool = False
     meters: list[MeterConfig] = Field(default_factory=list)
+    custom_fees: list[CustomFee] = Field(default_factory=list)
 
     @property
     def full_name(self) -> str:
@@ -207,3 +235,10 @@ class MemberBill(BaseModel):
     currency: str = "CHF"
     # Optional daily detail
     daily_details: list[DailyDetail] = Field(default_factory=list)
+    # Custom fees (calculated)
+    calculated_fees: list[CalculatedFee] = Field(default_factory=list)
+    total_fees: float = 0.0  # Sum of all calculated fee amounts
+    # VAT
+    vat_rate: float = 0.0  # VAT percentage used
+    vat_amount: float = 0.0  # Calculated VAT amount (only if net > 0)
+    grand_total: float = 0.0  # total_cost + total_fees + vat_amount (- total_revenue for host)

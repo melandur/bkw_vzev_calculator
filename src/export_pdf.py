@@ -24,10 +24,46 @@ _C_RATE = 35
 _C_TOTAL = 35
 
 
+def _draw_sun_icon(pdf: FPDF, cx: float, cy: float) -> None:
+    """Draw a small sun icon (star shape) at (cx, cy)."""
+    pdf.set_fill_color(245, 180, 0)
+    pdf.set_draw_color(200, 150, 0)
+    pdf.set_line_width(0.15)
+    # 8-pointed star resembling a sun
+    pdf.star(x=cx, y=cy, r_in=0.8, r_out=1.8, corners=8, rotate_degrees=22, style="DF")
+    # Reset
+    pdf.set_line_width(0.2)
+    pdf.set_draw_color(0, 0, 0)
+    pdf.set_fill_color(255, 255, 255)
+
+
+def _draw_lightning_icon(pdf: FPDF, cx: float, cy: float, h: float = 3.5) -> None:
+    """Draw a small lightning bolt icon at (cx, cy)."""
+    top = cy - h / 2
+    pdf.set_fill_color(50, 120, 200)
+    pdf.set_draw_color(30, 80, 160)
+    pdf.set_line_width(0.15)
+    points = (
+        (cx - 0.3, top),
+        (cx + 1.0, top),
+        (cx + 0.2, top + h * 0.42),
+        (cx + 1.0, top + h * 0.42),
+        (cx - 0.6, top + h),
+        (cx + 0.1, top + h * 0.55),
+        (cx - 0.7, top + h * 0.55),
+    )
+    pdf.polygon(points, style="DF")
+    # Reset
+    pdf.set_line_width(0.2)
+    pdf.set_draw_color(0, 0, 0)
+    pdf.set_fill_color(255, 255, 255)
+
+
 def export_pdf_bills(
     bills: list[MemberBill],
     collective_name: str,
     show_daily_detail: bool,
+    show_icons: bool,
     language: str,
     output_dir: str | Path,
 ) -> list[Path]:
@@ -40,7 +76,7 @@ def export_pdf_bills(
 
     paths: list[Path] = []
     for bill in bills:
-        path = _generate_bill_pdf(bill, collective_name, bill_title, show_daily_detail, t, language, out)
+        path = _generate_bill_pdf(bill, collective_name, bill_title, show_daily_detail, show_icons, t, language, out)
         paths.append(path)
 
     logger.info("Generated {} PDF bill(s) in {}", len(paths), out)
@@ -52,6 +88,7 @@ def _generate_bill_pdf(
     collective_name: str,
     bill_title: str,
     show_daily_detail: bool,
+    show_icons: bool,
     t: dict[str, str],
     language: str,
     out_dir: Path,
@@ -135,8 +172,12 @@ def _generate_bill_pdf(
     local_rate = bill.local_rate or 0.0
     bkw_rate = bill.bkw_rate or 0.0
 
-    _table_row_4col(pdf, t["local_solar"], bill.local_consumption_kwh, local_rate, bill.local_cost, bill.currency)
-    _table_row_4col(pdf, t["grid_bkw"], bill.bkw_consumption_kwh, bkw_rate, bill.bkw_cost, bill.currency)
+    # Icons: drawn as vector shapes when enabled
+    icon_solar = "sun" if show_icons else ""
+    icon_grid = "lightning" if show_icons else ""
+
+    _table_row_4col(pdf, t["local_solar"], bill.local_consumption_kwh, local_rate, bill.local_cost, bill.currency, icon=icon_solar)
+    _table_row_4col(pdf, t["grid_bkw"], bill.bkw_consumption_kwh, bkw_rate, bill.bkw_cost, bill.currency, icon=icon_grid)
     _table_total_4col(pdf, t["total"], bill.total_consumption_kwh, bill.total_cost, bill.currency)
     pdf.ln(2)
 
@@ -149,16 +190,21 @@ def _generate_bill_pdf(
 
         local_sell_rate = bill.local_sell_rate or 0.0
         _table_row_4col(
-            pdf, t["sold_locally"], bill.local_sell_kwh, local_sell_rate, bill.local_sell_revenue, bill.currency,
+            pdf, t["sold_locally"], bill.local_sell_kwh, local_sell_rate, bill.local_sell_revenue, bill.currency, icon=icon_solar,
         )
         _table_row_4col(
-            pdf, t["exported_to_grid"], bill.bkw_export_kwh, bkw_sell_rate, bill.bkw_export_revenue, bill.currency,
+            pdf, t["exported_to_grid"], bill.bkw_export_kwh, bkw_sell_rate, bill.bkw_export_revenue, bill.currency, icon=icon_grid,
         )
         _table_total_4col(pdf, t["total"], bill.total_production_kwh, bill.total_revenue, bill.currency)
         pdf.ln(2)
 
+    # ---- Additional Fees (if any) -----------------------------------------
+    if bill.calculated_fees:
+        _draw_additional_fees(pdf, bill, t)
+        pdf.ln(2)
+
     # ---- Summary box ------------------------------------------------------
-    net = bill.total_revenue - bill.total_cost
+    net = bill.total_revenue - bill.total_cost - bill.total_fees
     is_host = bill.member.is_host
     _summary_box(pdf, bill, net, is_host, t)
 
@@ -623,9 +669,25 @@ def _table_row_4col(
     total: float,
     currency: str,
     hide_rate: bool = False,
+    icon: str = "",
 ) -> None:
+    x_start = pdf.get_x()
+    y_row = pdf.get_y()
+    icon_w = 0
+
+    # Draw vector icon if requested
+    if icon:
+        icon_cx = x_start + 4.5
+        icon_cy = y_row + _TABLE_LH / 2
+        if icon == "sun":
+            _draw_sun_icon(pdf, icon_cx, icon_cy)
+        elif icon == "lightning":
+            _draw_lightning_icon(pdf, icon_cx, icon_cy, h=3.2)
+        icon_w = 8
+
     pdf.set_font("Helvetica", "", 8)
-    pdf.cell(_C_DESC, _TABLE_LH, f"  {desc}")
+    pdf.set_xy(x_start + icon_w, y_row)
+    pdf.cell(_C_DESC - icon_w, _TABLE_LH, f"  {desc}" if not icon else desc)
     pdf.cell(_C_KWH, _TABLE_LH, f"{kwh:,.0f}", align="R")
     if hide_rate:
         pdf.cell(_C_RATE, _TABLE_LH, "", align="R")
@@ -653,13 +715,58 @@ def _table_total_4col(
     pdf.ln(_TABLE_LH + 1)
 
 
+# ---- Additional fees section -----------------------------------------------
+
+
+def _draw_additional_fees(pdf: FPDF, bill: MemberBill, t: dict[str, str]) -> None:
+    """Draw the additional fees section with each fee as a row."""
+    _section_header(pdf, t.get("additional_fees", "Additional Fees"))
+
+    # Header row
+    pdf.set_fill_color(240, 242, 246)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(70, 70, 70)
+    pdf.cell(_C_DESC, _TABLE_LH, f"  {t['description']}", fill=True)
+    pdf.cell(_C_KWH + _C_RATE, _TABLE_LH, "", fill=True)  # Empty columns
+    pdf.cell(_C_TOTAL, _TABLE_LH, t["cost"], fill=True, align="R")
+    pdf.ln(_TABLE_LH)
+    pdf.set_text_color(0, 0, 0)
+
+    # Fee rows
+    for fee in bill.calculated_fees:
+        pdf.set_font("Helvetica", "", 8)
+        # Build description with fee type indicator
+        if fee.fee_type == "percent":
+            desc = f"  {fee.name} ({fee.value:.1f}%)"
+        else:  # yearly
+            desc = f"  {fee.name} ({fee.value:.2f} {bill.currency}/year)"
+        pdf.cell(_C_DESC, _TABLE_LH, desc)
+        pdf.cell(_C_KWH + _C_RATE, _TABLE_LH, "")  # Empty columns
+        pdf.cell(_C_TOTAL, _TABLE_LH, f"{fee.amount:,.2f}", align="R")
+        pdf.ln(_TABLE_LH)
+
+    # Total fees row
+    pdf.set_draw_color(200, 200, 200)
+    pdf.line(10, pdf.get_y(), 10 + _PAGE_W, pdf.get_y())
+    pdf.set_draw_color(0, 0, 0)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.cell(_C_DESC, _TABLE_LH + 1, f"  {t['total']}")
+    pdf.cell(_C_KWH + _C_RATE, _TABLE_LH + 1, "")
+    pdf.cell(_C_TOTAL, _TABLE_LH + 1, f"{bill.total_fees:,.2f} {bill.currency}", align="R")
+    pdf.ln(_TABLE_LH + 1)
+
+
 # ---- Summary box -----------------------------------------------------------
 
 
 def _summary_box(
     pdf: FPDF, bill: MemberBill, net: float, is_host: bool, t: dict[str, str],
 ) -> None:
-    box_h = 22
+    # Calculate box height based on whether fees/VAT exist
+    has_fees = bill.total_fees > 0
+    has_vat = bill.vat_amount > 0
+    extra_rows = (1 if has_fees else 0) + (1 if has_vat else 0)
+    box_h = 26 + extra_rows * 6  # Base height + extra rows
     y = pdf.get_y() + 1
 
     pdf.set_fill_color(245, 247, 250)
@@ -668,62 +775,122 @@ def _summary_box(
     pdf.rect(10, y, _PAGE_W, box_h, "D")
     pdf.set_draw_color(0, 0, 0)
 
-    row_y = y + 2
+    row_y = y + 3
+    label_w = 100
+    value_w = 80
 
     if is_host:
+        # Total cost row
         pdf.set_xy(14, row_y)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.cell(50, _LH, t["total_cost"])
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.cell(35, _LH, f"-{bill.total_cost:,.2f} {bill.currency}", align="R")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(label_w, _LH, t["total_cost"])
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(value_w, _LH, f"-{bill.total_cost:,.2f} {bill.currency}", align="R")
 
-        pdf.set_xy(115, row_y)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.cell(35, _LH, t["total_revenue"])
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.cell(35, _LH, f"+{bill.total_revenue:,.2f} {bill.currency}", align="R")
-
-        row_y += _LH + 3
+        # Total revenue row
+        row_y += _LH
         pdf.set_xy(14, row_y)
-        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(label_w, _LH, t["total_revenue"])
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(value_w, _LH, f"+{bill.total_revenue:,.2f} {bill.currency}", align="R")
+
+        # Fees row (if present)
+        if has_fees:
+            row_y += _LH
+            pdf.set_xy(14, row_y)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.cell(label_w, _LH, t.get("additional_fees", "Fees"))
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(value_w, _LH, f"-{bill.total_fees:,.2f} {bill.currency}", align="R")
+
+        # VAT row (if present)
+        if has_vat:
+            row_y += _LH
+            pdf.set_xy(14, row_y)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.cell(label_w, _LH, f"{t.get('vat', 'VAT')} ({bill.vat_rate:.2f}%)")
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(value_w, _LH, f"-{bill.vat_amount:,.2f} {bill.currency}", align="R")
+
+        # Separator line
+        row_y += _LH + 1
+        pdf.set_draw_color(33, 60, 114)
+        pdf.line(14, row_y, 14 + label_w + value_w, row_y)
+        pdf.set_draw_color(0, 0, 0)
+
+        # Net total row (use grand_total which includes fees + VAT)
+        row_y += 2
+        pdf.set_xy(14, row_y)
+        pdf.set_font("Helvetica", "B", 11)
         pdf.set_text_color(33, 60, 114)
-        sign = "+" if net >= 0 else ""
-        pdf.cell(_PAGE_W - 10, 8, f"{t['net']}:  {sign}{net:,.2f} {bill.currency}")
+        pdf.cell(label_w, _LH + 2, t["net"])
+        # For host: grand_total is negative if revenue > costs
+        grand = bill.grand_total
+        sign = "+" if grand <= 0 else ""
+        # Flip sign for display: negative grand_total means profit
+        display_val = -grand if grand != 0 else 0
+        pdf.cell(value_w, _LH + 2, f"{sign}{display_val:,.2f} {bill.currency}", align="R")
         pdf.set_text_color(0, 0, 0)
     else:
         grid_rate = bill.bkw_rate or 0.0
         savings = bill.local_consumption_kwh * grid_rate - bill.local_cost
 
+        # Total cost row
         pdf.set_xy(14, row_y)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.cell(50, _LH, t["total_cost"])
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.cell(35, _LH, f"{bill.total_cost:,.2f} {bill.currency}", align="R")
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(label_w, _LH, t["total_cost"])
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(value_w, _LH, f"{bill.total_cost:,.2f} {bill.currency}", align="R")
 
-        pdf.set_xy(115, row_y)
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(35, _LH, t["saved_with_solar"])
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(34, 139, 34)
-        pdf.cell(35, _LH, f"{savings:,.2f} {bill.currency}", align="R")
-        pdf.set_text_color(0, 0, 0)
+        # Fees row (if present)
+        if has_fees:
+            row_y += _LH
+            pdf.set_xy(14, row_y)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.cell(label_w, _LH, t.get("additional_fees", "Fees"))
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(value_w, _LH, f"+{bill.total_fees:,.2f} {bill.currency}", align="R")
 
-        if bill.total_consumption_kwh > 0:
-            solar_pct = bill.local_consumption_kwh / bill.total_consumption_kwh * 100
+        # VAT row (if present)
+        if has_vat:
+            row_y += _LH
+            pdf.set_xy(14, row_y)
+            pdf.set_font("Helvetica", "", 9)
+            pdf.cell(label_w, _LH, f"{t.get('vat', 'VAT')} ({bill.vat_rate:.2f}%)")
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(value_w, _LH, f"+{bill.vat_amount:,.2f} {bill.currency}", align="R")
+
+        # Separator line
+        row_y += _LH + 1
+        pdf.set_draw_color(33, 60, 114)
+        pdf.line(14, row_y, 14 + label_w + value_w, row_y)
+        pdf.set_draw_color(0, 0, 0)
+
+        # Grand total or savings row
+        row_y += 2
+        pdf.set_xy(14, row_y)
+
+        if has_fees or has_vat:
+            # Show grand total when fees or VAT exist
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_text_color(33, 60, 114)
+            pdf.cell(label_w, _LH + 2, t.get("grand_total", "Grand Total"))
+            pdf.cell(value_w, _LH + 2, f"{bill.grand_total:,.2f} {bill.currency}", align="R")
         else:
-            solar_pct = 0.0
-
-        row_y += _LH + 3
-        pdf.set_xy(14, row_y)
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(34, 139, 34)
-        msg = t["you_saved"].format(
-            amount=f"{savings:,.2f}",
-            currency=bill.currency,
-            pct=f"{solar_pct:.1f}",
-        )
-        pdf.cell(_PAGE_W - 10, 8, msg)
+            # Show savings message when no fees/VAT
+            if bill.total_consumption_kwh > 0:
+                solar_pct = bill.local_consumption_kwh / bill.total_consumption_kwh * 100
+            else:
+                solar_pct = 0.0
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(34, 139, 34)
+            msg = t["you_saved"].format(
+                amount=f"{savings:,.2f}",
+                currency=bill.currency,
+                pct=f"{solar_pct:.1f}",
+            )
+            pdf.cell(label_w + value_w, _LH + 2, msg)
         pdf.set_text_color(0, 0, 0)
 
     pdf.set_y(y + box_h + 2)

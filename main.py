@@ -140,6 +140,8 @@ def main(config_path: str = "config.toml") -> None:
             conn,
             month_groups=month_groups,
             show_daily_detail=config.collective.show_daily_detail,
+            member_configs=config.members,
+            vat_rate=config.collective.vat_rate,
         )
         logger.info("Billing: {} bill(s) calculated", len(bills))
 
@@ -156,6 +158,7 @@ def main(config_path: str = "config.toml") -> None:
                 bills,
                 collective_name=config.collective.name,
                 show_daily_detail=config.collective.show_daily_detail,
+                show_icons=config.collective.show_icons,
                 language=config.collective.language,
                 output_dir=config.settings.output_directory,
             )
