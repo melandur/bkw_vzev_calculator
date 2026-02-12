@@ -573,22 +573,39 @@ def _actions_section() -> None:
                 from main import main as run_main
 
                 run_main(str(_CONFIG_PATH))
-                st.success(t["pipeline_success"])
+                st.session_state["_pipeline_success"] = True
+                st.session_state["_pipeline_error"] = None
             except SystemExit:
-                st.error(t["pipeline_exit_error"])
+                st.session_state["_pipeline_success"] = False
+                st.session_state["_pipeline_error"] = "exit"
             except Exception as exc:
-                st.error(t["pipeline_failed"].format(error=exc))
+                st.session_state["_pipeline_success"] = False
+                st.session_state["_pipeline_error"] = str(exc)
             finally:
-                logger.remove(sink_id)
+                try:
+                    logger.remove(sink_id)
+                except ValueError:
+                    pass  # Handler already removed
 
-        log_output = log_buffer.getvalue()
-        if log_output:
-            st.subheader(t["log_output"])
-            st.code(log_output, language="text")
+        st.session_state["_pipeline_log"] = log_buffer.getvalue()
+        st.rerun()  # Rerun to show results persistently
 
-        # Show generated files
-        out_dir = Path(st.session_state["settings"].get("output_directory", "./output"))
-        _show_output_files(out_dir)
+    # Show pipeline results (persisted across reruns)
+    if st.session_state.get("_pipeline_success") is True:
+        st.success(t["pipeline_success"])
+    elif st.session_state.get("_pipeline_error") == "exit":
+        st.error(t["pipeline_exit_error"])
+    elif st.session_state.get("_pipeline_error"):
+        st.error(t["pipeline_failed"].format(error=st.session_state["_pipeline_error"]))
+
+    log_output = st.session_state.get("_pipeline_log", "")
+    if log_output:
+        st.subheader(t["log_output"])
+        st.code(log_output, language="text")
+
+    # Always show generated files if they exist
+    out_dir = Path(st.session_state["settings"].get("output_directory", "./output"))
+    _show_output_files(out_dir)
 
 
 def _show_output_files(out_dir: Path) -> None:

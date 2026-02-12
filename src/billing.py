@@ -127,6 +127,13 @@ def calculate_bills_for_period(
         member_totals[mid]["physical_production"] += rec.physical_production
         member_totals[mid]["virtual_production"] += rec.virtual_production
 
+    # Calculate local consumption of non-host members (energy actually sold to others)
+    non_host_local_consumption = 0.0
+    for mid, totals in member_totals.items():
+        member = member_by_id.get(mid)
+        if member is not None and not member.is_host:
+            non_host_local_consumption += totals["local_consumption"]
+
     bills: list[MemberBill] = []
 
     for mid, totals in member_totals.items():
@@ -160,7 +167,8 @@ def calculate_bills_for_period(
             # Grid export = sum of interval-level surplus (virtual_production)
             bkw_export_kwh = virtual_production
             bkw_export_revenue = bkw_export_kwh * bkw_sell_rate
-            local_sell_kwh = max(0.0, physical_production - bkw_export_kwh)
+            # "Sold locally" = only energy consumed by OTHER members (excludes self-consumption)
+            local_sell_kwh = non_host_local_consumption
 
             # Local sell revenue: producer earns the collective local_rate
             local_sell_revenue = local_sell_kwh * collective_local_rate
@@ -172,6 +180,21 @@ def calculate_bills_for_period(
             # Collect daily details from all months in the period
             for year, month in period_months:
                 daily_rows = get_daily_aggregates(conn, mid, year, month)
+
+                # For host/producer: compute daily non-host local consumption
+                daily_non_host_local: dict[int, float] = {}
+                if is_producer and member.is_host:
+                    non_host_ids = [
+                        m.id for m in members if not m.is_host
+                    ]
+                    for nh_id in non_host_ids:
+                        nh_rows = get_daily_aggregates(conn, nh_id, year, month)
+                        for nh_dr in nh_rows:
+                            daily_non_host_local[nh_dr["day"]] = (
+                                daily_non_host_local.get(nh_dr["day"], 0.0)
+                                + nh_dr["local_consumption"]
+                            )
+
                 for dr in daily_rows:
                     d_local = dr["local_consumption"]
                     d_bkw = dr["bkw_consumption"]
@@ -183,7 +206,13 @@ def calculate_bills_for_period(
                     d_bkw_cost = d_bkw * bkw_rate
 
                     # Production breakdown for host
-                    d_local_sell = max(0.0, d_phys_prod - d_virt_prod) if is_producer else 0.0
+                    if is_producer and member.is_host:
+                        # "Sold locally" = only non-host members' local consumption for this day
+                        d_local_sell = daily_non_host_local.get(dr["day"], 0.0)
+                    elif is_producer:
+                        d_local_sell = max(0.0, d_phys_prod - d_virt_prod)
+                    else:
+                        d_local_sell = 0.0
                     d_bkw_export = d_virt_prod if is_producer else 0.0
                     d_bkw_export_rev = d_bkw_export * bkw_sell_rate if is_producer else 0.0
                     d_local_sell_rev = d_local_sell * collective_local_rate if is_producer else 0.0
