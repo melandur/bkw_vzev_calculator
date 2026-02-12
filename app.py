@@ -79,7 +79,7 @@ def _load_config_dict() -> dict:
     }
 
 
-_BILLING_INTERVALS = ["monthly", "quarterly", "semi_annual", "annual"]
+_BILLING_INTERVAL_KEYS = ["monthly", "quarterly", "semi_annual", "annual"]
 _YEARS = [str(y) for y in range(2020, 2036)]
 _MONTHS = [f"{m:02d}" for m in range(1, 13)]
 
@@ -260,10 +260,14 @@ def _sidebar() -> None:
     c["billing_end"] = f"{end_year_sel}-{end_month_sel}"
 
     interval_val = c.get("billing_interval", "monthly")
-    interval_idx = _BILLING_INTERVALS.index(interval_val) if interval_val in _BILLING_INTERVALS else 0
-    c["billing_interval"] = st.sidebar.selectbox(
-        t["billing_interval"], _BILLING_INTERVALS, index=interval_idx
+    interval_idx = _BILLING_INTERVAL_KEYS.index(interval_val) if interval_val in _BILLING_INTERVAL_KEYS else 0
+    # Create translated labels for billing intervals
+    interval_labels = [t.get(f"interval_{key}", key) for key in _BILLING_INTERVAL_KEYS]
+    selected_label = st.sidebar.selectbox(
+        t["billing_interval"], interval_labels, index=interval_idx
     )
+    # Map back to the internal key
+    c["billing_interval"] = _BILLING_INTERVAL_KEYS[interval_labels.index(selected_label)]
 
     st.sidebar.divider()
     st.sidebar.header(t["rates"])
@@ -402,7 +406,7 @@ def _render_data_availability_button() -> None:
         # Build the grid using Streamlit columns
         # Header row
         cols = st.columns([1] + [1] * 12)
-        cols[0].markdown("**Year**")
+        cols[0].markdown(f"**{t['year']}**")
         for i, name in enumerate(month_names):
             cols[i + 1].markdown(f"**{name[:3]}**")
 
@@ -423,9 +427,9 @@ def _render_data_availability_button() -> None:
 
         # Legend
         leg_cols = st.columns(3)
-        leg_cols[0].markdown("🟢 " + t.get("legend_allocated", "Allocated").replace("■ ", ""))
-        leg_cols[1].markdown("🟠 " + t.get("legend_partial", "Has data").replace("◫ ", ""))
-        leg_cols[2].markdown("⚪ " + t.get("legend_none", "None").replace("· ", ""))
+        leg_cols[0].markdown("🟢 " + t.get("legend_allocated", "■ Allocated").replace("■ ", ""))
+        leg_cols[1].markdown("🟠 " + t.get("legend_has_data", "◫ Has data").replace("◫ ", ""))
+        leg_cols[2].markdown("⚪ " + t.get("legend_none", "· None").replace("· ", ""))
 
         # Help text about CSV location
         csv_dir = st.session_state["settings"].get("csv_directory", "./data")
