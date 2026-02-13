@@ -235,13 +235,19 @@ def _sidebar() -> None:
     with st.sidebar.expander(t["settings"], expanded=False):
         s = st.session_state["settings"]
         s["csv_directory"] = st.text_input(
-            t["csv_directory"], value=s.get("csv_directory", "./data")
+            t["csv_directory"], 
+            value=s.get("csv_directory", "./data"),
+            help=t.get("csv_directory_help", ""),
         )
         s["output_directory"] = st.text_input(
-            t["output_directory"], value=s.get("output_directory", "./output")
+            t["output_directory"], 
+            value=s.get("output_directory", "./output"),
+            help=t.get("output_directory_help", ""),
         )
         s["database_path"] = st.text_input(
-            t["database_path"], value=s.get("database_path", "./vzev.db")
+            t["database_path"], 
+            value=s.get("database_path", "./vzev.db"),
+            help=t.get("database_path_help", ""),
         )
 
     # Collective section (collapsible) - just the name
@@ -251,7 +257,12 @@ def _sidebar() -> None:
     # Rates section (collapsible)
     with st.sidebar.expander(t["rates"], expanded=False):
         c["local_rate"] = st.number_input(
-            t["local_rate"], value=float(c.get("local_rate", 0.0)), format="%.6f", step=0.01, min_value=0.0
+            t["local_rate"], 
+            value=float(c.get("local_rate", 0.0)), 
+            format="%.6f", 
+            step=0.01, 
+            min_value=0.0,
+            help=t.get("local_rate_help", ""),
         )
         c["bkw_buy_rate"] = st.number_input(
             t["bkw_buy_rate"],
@@ -259,6 +270,7 @@ def _sidebar() -> None:
             format="%.6f",
             step=0.01,
             min_value=0.0,
+            help=t.get("bkw_buy_rate_help", ""),
         )
         c["bkw_sell_rate"] = st.number_input(
             t["bkw_sell_rate"],
@@ -266,6 +278,7 @@ def _sidebar() -> None:
             format="%.6f",
             step=0.01,
             min_value=0.0,
+            help=t.get("bkw_sell_rate_help", ""),
         )
         c["vat_rate"] = st.number_input(
             t["vat_rate"],
@@ -278,7 +291,7 @@ def _sidebar() -> None:
 
         # Custom fees button
         st.divider()
-        if st.button(t["custom_fees"], use_container_width=True):
+        if st.button(t["custom_fees"], use_container_width=True, help=t.get("custom_fees_help", "")):
             st.session_state["_show_custom_fees_dialog"] = True
             st.rerun()
 
@@ -323,13 +336,17 @@ def _sidebar() -> None:
         # Create translated labels for billing intervals
         interval_labels = [t.get(f"interval_{key}", key) for key in _BILLING_INTERVAL_KEYS]
         selected_label = st.selectbox(
-            t["billing_interval"], interval_labels, index=interval_idx
+            t["billing_interval"], 
+            interval_labels, 
+            index=interval_idx,
+            help=t.get("billing_interval_help", ""),
         )
         # Map back to the internal key
         c["billing_interval"] = _BILLING_INTERVAL_KEYS[interval_labels.index(selected_label)]
 
         c["show_daily_detail"] = st.checkbox(
-            t["show_daily_detail"], value=c.get("show_daily_detail", False)
+            t["show_daily_detail"], 
+            value=c.get("show_daily_detail", False),
         )
         c["show_icons"] = st.checkbox(
             t["show_icons"], value=c.get("show_icons", False)
@@ -690,7 +707,10 @@ def _members_section() -> None:
                     )
                 else:
                     member["is_host"] = col7.checkbox(
-                        t["is_host"], value=member.get("is_host", False), key=f"m{i}_host"
+                        t["is_host"], 
+                        value=member.get("is_host", False), 
+                        key=f"m{i}_host",
+                        help=t.get("is_host_help", ""),
                     )
 
                 # Meters
@@ -723,6 +743,7 @@ def _members_section() -> None:
                         key=f"m{i}_mt{j}_eid",
                         placeholder=t["placeholder_external_id"],
                         label_visibility="collapsed",
+                        help=t.get("external_id_help", ""),
                     )
                     if mc2.button(t["remove_meter"], key=f"m{i}_mt{j}_rm", use_container_width=True):
                         # Set pending meter deletion for confirmation
@@ -996,6 +1017,17 @@ def main() -> None:
         <style>
         /* Hide deploy button only */
         .stDeployButton {display: none;}
+        
+        /* Prevent sidebar content from overlapping with scrollbar */
+        [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+            padding-right: 1rem;
+        }
+        
+        /* Ensure sidebar buttons and expanders have proper spacing */
+        [data-testid="stSidebar"] button,
+        [data-testid="stSidebar"] [data-testid="stExpander"] {
+            margin-right: 0.5rem;
+        }
         
         /* Vertically center buttons in columns */
         [data-testid="stHorizontalBlock"] {
