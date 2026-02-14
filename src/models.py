@@ -36,6 +36,7 @@ class CollectiveConfig(BaseModel):
     bkw_buy_rate: float = 0.0
     bkw_sell_rate: float = 0.0
     vat_rate: float = 0.0  # VAT percentage, applied to positive net amounts
+    label_overrides: dict[str, str] = {}  # Custom label overrides for PDF bill texts
 
 
 class MeterConfig(BaseModel):
@@ -51,24 +52,27 @@ class CustomFee(BaseModel):
     """A custom fee entry for a member.
 
     Fee types:
-    - percent: Applied as percentage to running total (e.g., VAT 7.7%)
     - yearly: Fixed yearly amount split by billing months (e.g., admin fee CHF 120/year)
+    - per_kwh: Price per kWh applied to a specific energy basis (grid or local)
 
-    Order matters: fees are calculated sequentially, so percentage fees
-    at the end will apply to the sum of energy cost + previous fees.
+    The ``basis`` field is only relevant for per_kwh fees:
+    - grid: Applied to grid (BKW) consumption kWh
+    - local: Applied to local (solar) consumption kWh
     """
 
     name: str
     value: float
-    fee_type: str = "percent"  # "percent" or "yearly"
+    fee_type: str = "yearly"  # "yearly" or "per_kwh"
+    basis: str = "grid"  # "grid" or "local" (only used when fee_type == "per_kwh")
 
 
 class CalculatedFee(BaseModel):
     """A calculated fee with its computed amount for display on bills."""
 
     name: str
-    value: float  # Original value (percentage or yearly amount)
+    value: float  # Original value (yearly amount or per-kWh rate)
     fee_type: str
+    basis: str = ""  # "grid" or "local" for per_kwh fees
     amount: float  # Calculated amount in CHF
 
 

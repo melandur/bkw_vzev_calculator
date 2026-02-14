@@ -66,12 +66,15 @@ def export_pdf_bills(
     show_icons: bool,
     language: str,
     output_dir: str | Path,
+    label_overrides: dict[str, str] | None = None,
 ) -> list[Path]:
     """Write one PDF per bill. Returns paths to the generated files."""
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     t = get_translations(language)
+    if label_overrides:
+        t = {**t, **label_overrides}
     bill_title = t["bill_title"]
 
     paths: list[Path] = []
@@ -742,7 +745,10 @@ def _draw_additional_fees(pdf: FPDF, bill: MemberBill, t: dict[str, str]) -> Non
     for fee in bill.calculated_fees:
         pdf.set_font("Helvetica", "", 8)
         # Build description with fee type indicator
-        if fee.fee_type == "percent":
+        if fee.fee_type == "per_kwh":
+            basis_lbl = t.get("local_solar", "Local") if fee.basis == "local" else t.get("grid_bkw", "Grid")
+            desc = f"  {fee.name} ({fee.value:.4f} {bill.currency}/kWh - {basis_lbl})"
+        elif fee.fee_type == "percent":
             desc = f"  {fee.name} ({fee.value:.1f}%)"
         else:  # yearly
             desc = f"  {fee.name} ({fee.value:.2f} {bill.currency}/{per_year})"

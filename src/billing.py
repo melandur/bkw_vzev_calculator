@@ -258,8 +258,13 @@ def calculate_bills_for_period(
                     if fee.fee_type == "yearly":
                         # Yearly fee split by billing months
                         fee_amount = (fee.value / 12) * num_months
-                    else:  # percent
-                        # Percentage applied to running total
+                    elif fee.fee_type == "per_kwh":
+                        # Per-kWh fee applied to specified energy basis
+                        if fee.basis == "local":
+                            fee_amount = fee.value * local_consumption
+                        else:  # grid (default)
+                            fee_amount = fee.value * bkw_consumption_kwh
+                    else:  # percent (legacy)
                         fee_amount = (fee.value / 100) * running_total
 
                     fee_amount = round(fee_amount, 2)
@@ -270,6 +275,7 @@ def calculate_bills_for_period(
                         name=fee.name,
                         value=fee.value,
                         fee_type=fee.fee_type,
+                        basis=fee.basis if fee.fee_type == "per_kwh" else "",
                         amount=fee_amount,
                     ))
 

@@ -161,6 +161,7 @@ def main(config_path: str = "config.toml") -> None:
                 show_icons=config.collective.show_icons,
                 language=config.collective.language,
                 output_dir=config.settings.output_directory,
+                label_overrides=config.collective.label_overrides or None,
             )
             csv_path = export_csv_bills(bills, output_dir=config.settings.output_directory)
             logger.info("Export: {} PDF(s), CSV at {}", len(pdf_paths), csv_path)
