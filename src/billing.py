@@ -27,6 +27,9 @@ def calculate_bills(
     show_daily_detail: bool = False,
     member_configs: list[MemberConfig] | None = None,
     vat_rate: float = 0.0,
+    vat_on_local: bool = False,
+    vat_on_grid: bool = True,
+    vat_on_fees: bool = True,
 ) -> list[MemberBill]:
     """Calculate bills for the given month groups (billing periods).
 
@@ -42,7 +45,13 @@ def calculate_bills(
         Member configurations containing custom_fees. If provided, fees
         are calculated and added to the bills.
     vat_rate : float
-        VAT percentage to apply to positive net amounts.
+        VAT percentage to apply to eligible positions.
+    vat_on_local : bool
+        Whether VAT applies to Local (Solar) consumption.
+    vat_on_grid : bool
+        Whether VAT applies to Grid (BKW) consumption.
+    vat_on_fees : bool
+        Whether VAT applies to additional custom fees.
 
     Returns a flat list of :class:`MemberBill` objects.
     """
@@ -57,7 +66,10 @@ def calculate_bills(
 
     bills: list[MemberBill] = []
     for period_months in month_groups:
-        bills.extend(calculate_bills_for_period(conn, period_months, show_daily_detail, member_configs, vat_rate))
+        bills.extend(calculate_bills_for_period(
+            conn, period_months, show_daily_detail, member_configs,
+            vat_rate, vat_on_local, vat_on_grid, vat_on_fees,
+        ))
     return bills
 
 
@@ -67,6 +79,9 @@ def calculate_bills_for_period(
     show_daily_detail: bool = False,
     member_configs: list[MemberConfig] | None = None,
     vat_rate: float = 0.0,
+    vat_on_local: bool = False,
+    vat_on_grid: bool = True,
+    vat_on_fees: bool = True,
 ) -> list[MemberBill]:
     """Calculate bills for a billing period (one or more months).
 
@@ -279,16 +294,36 @@ def calculate_bills_for_period(
                         amount=fee_amount,
                     ))
 
-        # Calculate net before VAT
-        net_before_vat = total_cost + total_fees - total_revenue
+        # Calculate per-row VAT-inclusive amounts
+        vat_mult = (1 + vat_rate / 100) if vat_rate > 0 else 1.0
 
-        # Apply VAT only if net is positive and vat_rate > 0
-        vat_amount = 0.0
-        if vat_rate > 0 and net_before_vat > 0:
-            vat_amount = round((vat_rate / 100) * net_before_vat, 2)
+        local_cost_r = round(local_cost, 2)
+        bkw_cost_r = round(bkw_cost, 2)
+        total_cost_r = round(total_cost, 2)
 
-        # Grand total = cost + fees + VAT - revenue (for host)
-        grand_total = round(net_before_vat + vat_amount, 2)
+        local_cost_incl_vat = round(local_cost * vat_mult, 2) if (vat_rate > 0 and vat_on_local) else local_cost_r
+        bkw_cost_incl_vat = round(bkw_cost * vat_mult, 2) if (vat_rate > 0 and vat_on_grid) else bkw_cost_r
+        total_cost_incl_vat = local_cost_incl_vat + bkw_cost_incl_vat
+
+        # Update calculated fees with VAT-inclusive amounts
+        total_fees_incl_vat = 0.0
+        for cf in calculated_fees:
+            if vat_rate > 0 and vat_on_fees:
+                cf.amount_incl_vat = round(cf.amount * vat_mult, 2)
+            else:
+                cf.amount_incl_vat = cf.amount
+            total_fees_incl_vat += cf.amount_incl_vat
+
+        total_fees_incl_vat = round(total_fees_incl_vat, 2)
+
+        # VAT amount is the total difference between incl_vat and excl amounts
+        vat_amount = round(
+            (total_cost_incl_vat - total_cost_r) + (total_fees_incl_vat - round(total_fees, 2)),
+            2,
+        )
+
+        # Grand total = cost_incl_vat + fees_incl_vat - revenue
+        grand_total = round(total_cost_incl_vat + total_fees_incl_vat - total_revenue, 2)
 
         bill = MemberBill(
             member=member,
@@ -301,9 +336,12 @@ def calculate_bills_for_period(
             total_production_kwh=round(physical_production),
             local_sell_kwh=round(local_sell_kwh),
             bkw_export_kwh=round(bkw_export_kwh),
-            local_cost=round(local_cost, 2),
-            bkw_cost=round(bkw_cost, 2),
-            total_cost=round(total_cost, 2),
+            local_cost=local_cost_r,
+            bkw_cost=bkw_cost_r,
+            total_cost=total_cost_r,
+            local_cost_incl_vat=local_cost_incl_vat,
+            bkw_cost_incl_vat=bkw_cost_incl_vat,
+            total_cost_incl_vat=total_cost_incl_vat,
             local_sell_revenue=round(local_sell_revenue, 2),
             bkw_export_revenue=round(bkw_export_revenue, 2),
             total_revenue=round(total_revenue, 2),
@@ -314,6 +352,7 @@ def calculate_bills_for_period(
             daily_details=daily_details,
             calculated_fees=calculated_fees,
             total_fees=round(total_fees, 2),
+            total_fees_incl_vat=total_fees_incl_vat,
             vat_rate=vat_rate if vat_amount > 0 else 0.0,
             vat_amount=vat_amount,
             grand_total=grand_total,

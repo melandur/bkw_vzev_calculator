@@ -142,6 +142,9 @@ def main(config_path: str = "config.toml") -> None:
             show_daily_detail=config.collective.show_daily_detail,
             member_configs=config.members,
             vat_rate=config.collective.vat_rate,
+            vat_on_local=config.collective.vat_on_local,
+            vat_on_grid=config.collective.vat_on_grid,
+            vat_on_fees=config.collective.vat_on_fees,
         )
         logger.info("Billing: {} bill(s) calculated", len(bills))
 

@@ -36,6 +36,9 @@ class CollectiveConfig(BaseModel):
     bkw_buy_rate: float = 0.0
     bkw_sell_rate: float = 0.0
     vat_rate: float = 0.0  # VAT percentage, applied to positive net amounts
+    vat_on_local: bool = False  # Whether Local (Solar) consumption is subject to VAT
+    vat_on_grid: bool = True  # Whether Grid (BKW) consumption is subject to VAT
+    vat_on_fees: bool = True  # Whether additional custom fees are subject to VAT
     label_overrides: dict[str, str] = {}  # Custom label overrides for PDF bill texts
 
 
@@ -74,6 +77,7 @@ class CalculatedFee(BaseModel):
     fee_type: str
     basis: str = ""  # "grid" or "local" for per_kwh fees
     amount: float  # Calculated amount in CHF
+    amount_incl_vat: float = 0.0  # Amount including VAT (same as amount when VAT not applied)
 
 
 class MemberConfig(BaseModel):
@@ -227,6 +231,10 @@ class MemberBill(BaseModel):
     local_cost: float = 0.0
     bkw_cost: float = 0.0
     total_cost: float = 0.0
+    # Costs including VAT (CHF)
+    local_cost_incl_vat: float = 0.0
+    bkw_cost_incl_vat: float = 0.0
+    total_cost_incl_vat: float = 0.0
     # Revenue for producers (CHF)
     local_sell_revenue: float = 0.0
     bkw_export_revenue: float = 0.0
@@ -242,7 +250,8 @@ class MemberBill(BaseModel):
     # Custom fees (calculated)
     calculated_fees: list[CalculatedFee] = Field(default_factory=list)
     total_fees: float = 0.0  # Sum of all calculated fee amounts
+    total_fees_incl_vat: float = 0.0  # Sum of all fee amounts including VAT
     # VAT
     vat_rate: float = 0.0  # VAT percentage used
-    vat_amount: float = 0.0  # Calculated VAT amount (only if net > 0)
+    vat_amount: float = 0.0  # Calculated VAT amount (sum of per-row VAT additions)
     grand_total: float = 0.0  # total_cost + total_fees + vat_amount (- total_revenue for host)

@@ -78,6 +78,9 @@ def _load_config_dict() -> dict:
             "bkw_buy_rate": 0.2816,
             "bkw_sell_rate": 0.1311,
             "vat_rate": 0.0,
+            "vat_on_local": False,
+            "vat_on_grid": True,
+            "vat_on_fees": True,
             "label_overrides": {},
         },
         "members": [],
@@ -131,6 +134,15 @@ def _serialize_toml(settings: dict, collective: dict, members: list[dict]) -> st
     lines.append(f"bkw_buy_rate = {collective['bkw_buy_rate']}")
     lines.append(f"bkw_sell_rate = {collective['bkw_sell_rate']}")
     lines.append(f"vat_rate = {collective['vat_rate']}")
+    lines.append(
+        f"vat_on_local = {'true' if collective.get('vat_on_local') else 'false'}"
+    )
+    lines.append(
+        f"vat_on_grid = {'true' if collective.get('vat_on_grid', True) else 'false'}"
+    )
+    lines.append(
+        f"vat_on_fees = {'true' if collective.get('vat_on_fees', True) else 'false'}"
+    )
 
     # Label overrides (only write non-empty overrides)
     label_overrides = collective.get("label_overrides", {})
@@ -302,6 +314,25 @@ def _sidebar() -> None:
             help=t.get("vat_rate_help", ""),
         )
 
+        # VAT scope checkboxes (only shown when vat_rate > 0)
+        if c.get("vat_rate", 0.0) > 0:
+            st.caption(t.get("vat_applies_to", "VAT applies to:"))
+            c["vat_on_grid"] = st.checkbox(
+                t.get("vat_on_grid", "Grid (BKW)"),
+                value=c.get("vat_on_grid", True),
+                key="vat_on_grid",
+            )
+            c["vat_on_local"] = st.checkbox(
+                t.get("vat_on_local", "Local (Solar)"),
+                value=c.get("vat_on_local", False),
+                key="vat_on_local",
+            )
+            c["vat_on_fees"] = st.checkbox(
+                t.get("vat_on_fees", "Additional fees"),
+                value=c.get("vat_on_fees", True),
+                key="vat_on_fees",
+            )
+
         # Custom fees button
         st.divider()
         if st.button(t["custom_fees"], use_container_width=True, help=t.get("custom_fees_help", "")):
@@ -422,6 +453,7 @@ _LABEL_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
     ("label_group_fees", [
         ("additional_fees", "Additional Fees"),
         ("vat", "VAT"),
+        ("incl_vat", "incl. VAT"),
         ("per_year", "year"),
     ]),
 ]
@@ -445,37 +477,64 @@ def _render_label_overrides_dialog() -> None:
         def _labels_editor():
             changed = False
 
-            # Process pending reset
-            if st.session_state.pop("_label_reset_pending", False):
-                overrides.clear()
-                c["label_overrides"] = {}
-                changed = True
+            # Process pending actions from previous fragment rerun
+            pending = st.session_state.pop("_label_pending_action", None)
+            if pending:
+                action, key = pending
+                if action == "reset_one":
+                    overrides.pop(key, None)
+                    c["label_overrides"] = dict(overrides)
+                    changed = True
+                elif action == "reset_all":
+                    overrides.clear()
+                    c["label_overrides"] = {}
+                    changed = True
 
             for group_key, keys in _LABEL_GROUPS:
                 st.subheader(t.get(group_key, group_key))
                 for bill_key, fallback_hint in keys:
                     default_val = defaults.get(bill_key, fallback_hint)
-                    current_val = overrides.get(bill_key, "")
-                    new_val = st.text_input(
-                        bill_key,
-                        value=current_val,
-                        placeholder=default_val,
-                        key=f"lbl_{bill_key}",
-                        help=f"Default: {default_val}",
+                    has_override = bill_key in overrides
+                    display_val = overrides.get(bill_key, default_val)
+
+                    col_cur, col_new, col_rst = st.columns([5, 5, 1])
+
+                    # Left: current value (read-only display)
+                    col_cur.text_input(
+                        f"cur_{bill_key}",
+                        value=display_val,
+                        disabled=True,
+                        label_visibility="collapsed",
+                        key=f"lbl_cur_{bill_key}",
                     )
-                    if new_val != current_val:
+
+                    # Right: editable override
+                    new_val = col_new.text_input(
+                        f"new_{bill_key}",
+                        value="",
+                        placeholder=default_val,
+                        label_visibility="collapsed",
+                        key=f"lbl_new_{bill_key}",
+                    )
+
+                    if new_val.strip() and new_val.strip() != display_val:
                         changed = True
-                        if new_val.strip():
-                            overrides[bill_key] = new_val.strip()
-                        else:
-                            overrides.pop(bill_key, None)
+                        overrides[bill_key] = new_val.strip()
+
+                    # Reset button (only enabled if there's an override)
+                    if has_override:
+                        if col_rst.button("↺", key=f"lbl_rst_{bill_key}", use_container_width=True):
+                            st.session_state["_label_pending_action"] = ("reset_one", bill_key)
+                            st.rerun(scope="fragment")
+                    else:
+                        col_rst.button("↺", key=f"lbl_rst_{bill_key}", use_container_width=True, disabled=True)
 
             if changed:
                 c["label_overrides"] = dict(overrides)
 
             st.divider()
             if st.button(t.get("reset_defaults", "Reset to defaults"), use_container_width=True):
-                st.session_state["_label_reset_pending"] = True
+                st.session_state["_label_pending_action"] = ("reset_all", "")
                 st.rerun(scope="fragment")
 
         _labels_editor()
