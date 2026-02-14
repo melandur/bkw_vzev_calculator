@@ -312,6 +312,8 @@ def _draw_consumption_col_headers(pdf: FPDF, currency: str, t: dict[str, str]) -
     """Draw the column header row for daily consumption tables."""
     col_w = _D_VAL
     h = _D_ROW_H
+    local_lbl = t.get("local_currency", "Local")
+    grid_lbl = t.get("grid_currency", "Grid")
     pdf.set_fill_color(240, 242, 246)
     pdf.set_font("Helvetica", "B", 7)
     pdf.set_text_color(70, 70, 70)
@@ -319,8 +321,8 @@ def _draw_consumption_col_headers(pdf: FPDF, currency: str, t: dict[str, str]) -
     pdf.cell(col_w, h, t["local_kwh"], fill=True, align="R")
     pdf.cell(col_w, h, t["grid_kwh"], fill=True, align="R")
     pdf.cell(col_w, h, t["total_kwh"], fill=True, align="R")
-    pdf.cell(col_w, h, f"Local {currency}", fill=True, align="R")
-    pdf.cell(col_w, h, f"Grid {currency}", fill=True, align="R")
+    pdf.cell(col_w, h, f"{local_lbl} {currency}", fill=True, align="R")
+    pdf.cell(col_w, h, f"{grid_lbl} {currency}", fill=True, align="R")
     pdf.cell(col_w, h, f"{t['total']} {currency}", fill=True, align="R")
     pdf.ln(h)
     pdf.set_text_color(0, 0, 0)
@@ -330,6 +332,8 @@ def _draw_production_col_headers(pdf: FPDF, currency: str, t: dict[str, str]) ->
     """Draw the column header row for daily production tables."""
     col_w = _D_VAL
     h = _D_ROW_H
+    local_lbl = t.get("local_currency", "Local")
+    grid_lbl = t.get("grid_currency", "Grid")
     pdf.set_fill_color(240, 242, 246)
     pdf.set_font("Helvetica", "B", 7)
     pdf.set_text_color(70, 70, 70)
@@ -337,8 +341,8 @@ def _draw_production_col_headers(pdf: FPDF, currency: str, t: dict[str, str]) ->
     pdf.cell(col_w, h, t["prod_kwh"], fill=True, align="R")
     pdf.cell(col_w, h, t["local_kwh"], fill=True, align="R")
     pdf.cell(col_w, h, t["grid_kwh"], fill=True, align="R")
-    pdf.cell(col_w, h, f"Local {currency}", fill=True, align="R")
-    pdf.cell(col_w, h, f"Grid {currency}", fill=True, align="R")
+    pdf.cell(col_w, h, f"{local_lbl} {currency}", fill=True, align="R")
+    pdf.cell(col_w, h, f"{grid_lbl} {currency}", fill=True, align="R")
     pdf.cell(col_w, h, f"{t['total']} {currency}", fill=True, align="R")
     pdf.ln(h)
     pdf.set_text_color(0, 0, 0)
@@ -732,6 +736,8 @@ def _draw_additional_fees(pdf: FPDF, bill: MemberBill, t: dict[str, str]) -> Non
     pdf.ln(_TABLE_LH)
     pdf.set_text_color(0, 0, 0)
 
+    per_year = t.get("per_year", "year")
+
     # Fee rows
     for fee in bill.calculated_fees:
         pdf.set_font("Helvetica", "", 8)
@@ -739,7 +745,7 @@ def _draw_additional_fees(pdf: FPDF, bill: MemberBill, t: dict[str, str]) -> Non
         if fee.fee_type == "percent":
             desc = f"  {fee.name} ({fee.value:.1f}%)"
         else:  # yearly
-            desc = f"  {fee.name} ({fee.value:.2f} {bill.currency}/year)"
+            desc = f"  {fee.name} ({fee.value:.2f} {bill.currency}/{per_year})"
         pdf.cell(_C_DESC, _TABLE_LH, desc)
         pdf.cell(_C_KWH + _C_RATE, _TABLE_LH, "")  # Empty columns
         pdf.cell(_C_TOTAL, _TABLE_LH, f"{fee.amount:,.2f}", align="R")
